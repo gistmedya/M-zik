@@ -6,7 +6,7 @@ MİMARİ (RTMP kalıcı):
 
   [Okuyucu FFmpeg (her film için ayrı)]  --MPEG-TS pipe-->  [Çıkış FFmpeg (HİÇ KAPANMAZ)]  --RTMP-->  Sunucu
 
-- Okuyucu: filmi açar, logo/yazı ekler, x264+AAC ile kodlar, MPEG-TS olarak stdout'a yazar.
+- Okuyucu: filmi açar, altyazı, logo ve yazı ekler, x264+AAC ile kodlar, MPEG-TS olarak stdout'a yazar.
 - Çıkış: stdin'den MPEG-TS okur, yeniden kodlamadan (-c copy) RTMP'ye gönderir.
 - Film bitince sadece okuyucu kapanır; çıkış süreci ve RTMP bağlantısı açık kalır.
 - Sadece RTMP/çıkış süreci gerçekten ölürse yeniden başlatılır.
@@ -47,8 +47,8 @@ STREAM_USER_AGENT = (
 STREAM_REFERER = "https://vidmody.com/"
 STREAM_ORIGIN = "https://vidmody.com"
 
-LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "1.0"))
-TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "1.0"))
+LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "0.4"))
+TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "0.6"))
 BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
 DECODER_THREADS = os.getenv("DECODER_THREADS", "1")
@@ -74,9 +74,7 @@ FAST_FAIL_THRESHOLD_SECONDS = 20
 MAX_RETRY_DELAY_SECONDS = 120
 
 # ÇİFT URL ("video;ses") AYARLARI
-# Bu kadar art arda hızlı hatadan sonra sadece video URL'si ile denenir (0 = kapalı).
 DUAL_FALLBACK_AFTER_FAILURES = int(os.getenv("DUAL_FALLBACK_AFTER_FAILURES", "3"))
-# Ayrı ses akışında zaman kaymalarını düzelten senkron filtresi (1 = açık, 0 = kapalı).
 DUAL_AUDIO_SYNC = os.getenv("DUAL_AUDIO_SYNC", "1") == "1"
 
 
@@ -97,8 +95,8 @@ class RtmpOutput:
         cmd = [
             'ffmpeg', '-hide_banner', '-loglevel', 'warning', '-nostats',
             '-fflags', '+genpts+nobuffer',
-            '-analyzeduration', '3000000',
-            '-probesize', '3000000',
+            '-analyzeduration', '20000000',
+            '-probesize', '20000000',
             '-f', 'mpegts', '-i', 'pipe:0',
             '-map', '0:v:0', '-map', '0:a:0?',
             '-c', 'copy',
@@ -112,7 +110,6 @@ class RtmpOutput:
         print(f"🔌 Kalıcı RTMP çıkış süreci başlatıldı => {self.rtmp_url}")
 
     def _drain_stderr(self, proc):
-        """stderr dolup süreci kilitlemesin diye sürekli okunur."""
         try:
             for raw in iter(proc.stderr.readline, b''):
                 self.stderr_tail.append(raw.decode('utf-8', 'replace').rstrip())
@@ -159,7 +156,6 @@ def format_hms(total_seconds):
     return f"{total_seconds // 3600:02d}:{(total_seconds % 3600) // 60:02d}:{total_seconds % 60:02d}"
 
 
-# URL -> süre (sn). Bağlantı kopup aynı film yeniden denendiğinde ffprobe tekrar çalıştırılmaz.
 _DURATION_CACHE = {}
 
 
@@ -534,17 +530,17 @@ def build_reader_command(target_url, seek_seconds, active_sub_file=None, video_o
 
     title_drawtext = (
         f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
-        f"fontcolor=white@{TEXT_OPACITY}:fontsize=19:x=20:y=h-th-20"
+        f"fontcolor=white@{TEXT_OPACITY}:fontsize=26:x=70:y=h-th-70"
     )
     
-    # Filtre zinciri adımları
+    # Filtre zinciri adımları (Altyazı entegrasyonu dahil)
     filter_steps = [
         '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
         'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main]'
     ]
     current_v_label = 'main'
 
-    # Altyazı entegrasyonu (libass motoru)
+    # Altyazı Filtresi (libass motoru)
     if active_sub_file and os.path.exists(active_sub_file):
         sub_style = (
             "FontName=DejaVuSans-Bold,"
@@ -565,10 +561,10 @@ def build_reader_command(target_url, seek_seconds, active_sub_file=None, video_o
     has_logo = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
     if has_logo:
         logo_inputs = ['-i', 'logo.png']
-        logo_filter = f"[{logo_index}:v]scale=-2:85,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1]"
+        logo_filter = f"[{logo_index}:v]scale=-2:91,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1]"
         filter_steps.append(logo_filter)
         
-        overlay_filter = f"[{current_v_label}][logo1]overlay=W-w-50:50[tmp1]"
+        overlay_filter = f"[{current_v_label}][logo1]overlay=W-w-104:80[tmp1]"
         filter_steps.append(overlay_filter)
         current_v_label = 'tmp1'
     else:
