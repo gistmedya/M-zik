@@ -58,27 +58,19 @@ BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/D
 
 DECODER_THREADS = os.getenv("DECODER_THREADS", "1")
 
-# İlerleme (time=) bu kadar sn gelmezse süreç donmuş sayılır.
 WATCHDOG_TIMEOUT_SECONDS = int(os.getenv("WATCHDOG_TIMEOUT_SECONDS", "45"))
-# İlk kare gelene kadar tanınan süre (HLS kaynaklar geç açılabilir).
 WATCHDOG_STARTUP_SECONDS = int(os.getenv("WATCHDOG_STARTUP_SECONDS", "120"))
 
-# Link değişip aynı film olduğunda geriden devam edilecek süre.
 LINK_CHANGE_REWIND_SECONDS = int(os.getenv("LINK_CHANGE_REWIND_SECONDS", "15"))
-
-# Filmin bittiği sayılması için toplam süreden en fazla bu kadar sn eksik kalınabilir.
 END_TOLERANCE_SECONDS = int(os.getenv("END_TOLERANCE_SECONDS", "90"))
 
-# Art arda erken/hatalı bitişlerde seek konumu bu kadar geri alınır (seek sorunlarına karşı).
 SEEK_BACKOFF_SECONDS = int(os.getenv("SEEK_BACKOFF_SECONDS", "30"))
 SEEK_BACKOFF_AFTER_FAILURES = int(os.getenv("SEEK_BACKOFF_AFTER_FAILURES", "2"))
 
-# Bu kadar art arda hızlı hatadan sonra sıradaki içeriğe geçilir.
 MAX_CONSECUTIVE_FAILURES = int(os.getenv("MAX_CONSECUTIVE_FAILURES", "4"))
 FAST_FAIL_THRESHOLD_SECONDS = 20
 MAX_RETRY_DELAY_SECONDS = 120
 
-# ÇİFT URL ("video;ses") AYARLARI
 DUAL_FALLBACK_AFTER_FAILURES = int(os.getenv("DUAL_FALLBACK_AFTER_FAILURES", "3"))
 DUAL_AUDIO_SYNC = os.getenv("DUAL_AUDIO_SYNC", "1") == "1"
 
@@ -111,13 +103,12 @@ class RtmpOutput:
         self.stderr_tail.clear()
         cmd = [
             'ffmpeg', '-hide_banner', '-loglevel', 'warning', '-nostats',
-            '-fflags', '+genpts',
-            '-analyzeduration', '30000000',
-            '-probesize', '30000000',
+            '-fflags', '+genpts+nobuffer',
+            '-analyzeduration', '3000000',
+            '-probesize', '3000000',
             '-f', 'mpegts', '-i', 'pipe:0',
             '-map', '0:v:0', '-map', '0:a:0?',
             '-c', 'copy',
-            '-bsf:v', 'h264_mp4toannexb',
             '-flvflags', 'no_duration_filesize',
             '-f', 'flv', self.rtmp_url,
         ]
@@ -619,7 +610,6 @@ def iter_stderr_lines(stream):
 
 def pump_reader_to_output(reader, output):
     fd = reader.stdout.fileno()
-    first = True
     while True:
         try:
             chunk = os.read(fd, 65536)
@@ -627,23 +617,6 @@ def pump_reader_to_output(reader, output):
             break
         if not chunk:
             break
-
-        if first:
-            if len(chunk) < 16384:
-                buffered = chunk
-                deadline = time.time() + 5
-                while len(buffered) < 16384 and time.time() < deadline:
-                    try:
-                        more = os.read(fd, 65536)
-                        if not more:
-                            break
-                        buffered += more
-                    except OSError:
-                        break
-                chunk = buffered
-                print(f"📦 İlk MPEG-TS paketi hazırlandı ({len(chunk)} byte)")
-            first = False
-
         if not output.write(chunk):
             try:
                 reader.kill()
@@ -789,10 +762,7 @@ def build_reader_command(target_url, seek_seconds, video_only=False, subtitle_fi
             '-map', '[v]',
         ] + audio_map + audio_filter + [
             '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
-            '-r', '25', '-b:v', '2500k', '-maxrate', '2500k', '-bufsize', '3000k',
-            '-g', '50', '-keyint_min', '25', '-sc_threshold', '0',
-            '-x264-params', 'repeat-headers=1:force-cfr=1',
-            '-bsf:v', 'h264_mp4toannexb',
+            '-r', '25', '-b:v', '2500k', '-maxrate', '2500k', '-bufsize', '3000k', '-g', '50',
             '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-ar', '44100',
             '-flush_packets', '1', '-muxdelay', '0', '-muxpreload', '0',
             '-mpegts_flags', '+resend_headers',
