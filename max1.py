@@ -85,13 +85,13 @@ DUAL_AUDIO_SYNC = os.getenv("DUAL_AUDIO_SYNC", "1") == "1"
 # ===================== ALTYAZI AYARLARI =====================
 SUBTITLE_ENABLED = os.getenv("SUBTITLE_ENABLED", "1") == "1"
 SUBTITLE_FONT_NAME = os.getenv("SUBTITLE_FONT_NAME", "DejaVu Sans")
-SUBTITLE_FONT_SIZE = os.getenv("SUBTITLE_FONT_SIZE", "22")
+SUBTITLE_FONT_SIZE = os.getenv("SUBTITLE_FONT_SIZE", "10")
 SUBTITLE_PRIMARY_COLOR = os.getenv("SUBTITLE_PRIMARY_COLOR", "&H00FFFFFF")   # Beyaz (AABBGGRR)
 SUBTITLE_OUTLINE_COLOR = os.getenv("SUBTITLE_OUTLINE_COLOR", "&H00000000")   # Siyah outline
 SUBTITLE_BACK_COLOR = os.getenv("SUBTITLE_BACK_COLOR", "&H80000000")         # Yarı saydam siyah
 SUBTITLE_OUTLINE = os.getenv("SUBTITLE_OUTLINE", "2")
 SUBTITLE_SHADOW = os.getenv("SUBTITLE_SHADOW", "1")
-SUBTITLE_MARGIN_V = os.getenv("SUBTITLE_MARGIN_V", "40")
+SUBTITLE_MARGIN_V = os.getenv("SUBTITLE_MARGIN_V", "20")
 SUBTITLE_BORDER_STYLE = os.getenv("SUBTITLE_BORDER_STYLE", "1")  # 1=outline+shadow, 3=opak kutu
 
 
@@ -117,6 +117,7 @@ class RtmpOutput:
             '-f', 'mpegts', '-i', 'pipe:0',
             '-map', '0:v:0', '-map', '0:a:0?',
             '-c', 'copy',
+            # NOT: -bsf:v h264_mp4toannexb KALDIRILDI (header'ı bozuyordu)
             '-flvflags', 'no_duration_filesize',
             '-f', 'flv', self.rtmp_url,
         ]
@@ -405,72 +406,34 @@ def write_text_file(path, text):
 
 # ===================== ALTYAZI FONKSİYONLARI =====================
 def vtt_to_srt(vtt_text):
-    """
-    Sağlam VTT → SRT dönüştürücü.
-    Her bloğun sonunda MUTLAKA boş satır bırakır — numara metne yapışmaz.
-    """
-    # Satır sonlarını normalize et
-    text = vtt_text.replace('\r\n', '\n').replace('\r', '\n')
-    lines = text.split('\n')
-
+    """Basit VTT → SRT dönüştürücü."""
+    lines = vtt_text.splitlines()
     out = []
     counter = 1
     i = 0
 
-    # 1) WEBVTT başlığını, NOTE ve STYLE bloklarını atla
+    # WEBVTT başlığını ve meta satırlarını atla
     while i < len(lines):
-        line = lines[i].strip()
-        if line.startswith('WEBVTT'):
-            i += 1
-            continue
-        if line.startswith('NOTE') or line.startswith('STYLE'):
-            while i < len(lines) and lines[i].strip():
-                i += 1
-            continue
-        if line.startswith('X-TIMESTAMP-MAP') or line.startswith('Kind:') or line.startswith('Language:'):
-            i += 1
-            continue
         if '-->' in lines[i]:
             break
         i += 1
 
-    # 2) Zaman bloklarını işle
     while i < len(lines):
-        line = lines[i].strip()
-
+        line = lines[i]
         if '-->' in line:
-            # Zaman damgası: noktaları virgüle çevir
-            timestamp = line.replace('.', ',')
-            timestamp = re.sub(r'\s+(align|position|line|size|region|vertical):\S+', '', timestamp)
-            timestamp = timestamp.strip()
-
-            # Metin satırlarını topla
-            i += 1
-            text_lines = []
-            while i < len(lines) and '-->' not in lines[i]:
-                text_line = lines[i].strip()
-                if text_line:
-                    clean = re.sub(r'<[^>]+>', '', text_line)
-                    if clean.strip():
-                        text_lines.append(clean.strip())
-                i += 1
-
-            # Metin yoksa bu bloğu atla
-            if not text_lines:
-                continue
-
-            # Numara + zaman + metin
+            line = line.replace('.', ',')
+            line = re.sub(r'\s+(align|position|line|size|region):\S+', '', line)
             out.append(str(counter))
-            out.append(timestamp)
-            out.extend(text_lines)
-            # 🔥 BLOK SONU BOŞ SATIR — MUTLAKA
-            out.append('')
+            out.append(line)
             counter += 1
-        else:
-            i += 1
+        elif line.strip() and not line.startswith('NOTE') and not line.startswith('STYLE'):
+            clean = re.sub(r'<[^>]+>', '', line)
+            out.append(clean)
+        elif not line.strip() and out and out[-1] != '':
+            out.append('')
+        i += 1
 
-    result = '\n'.join(out).rstrip() + '\n'
-    return result
+    return '\n'.join(out)
 
 
 def _find_subtitle_ext(url):
@@ -750,7 +713,7 @@ def build_subtitle_style():
         f"BorderStyle={SUBTITLE_BORDER_STYLE},"
         f"Outline={SUBTITLE_OUTLINE},"
         f"Shadow={SUBTITLE_SHADOW},"
-        f"Alignment=2,"
+        f"Alignment=2,"  # 2 = alt orta
         f"MarginV={SUBTITLE_MARGIN_V}"
     )
 
@@ -780,12 +743,14 @@ def build_reader_command(target_url, seek_seconds, video_only=False, subtitle_fi
         f"fontcolor=white@{TEXT_OPACITY}:fontsize=25:x=51:y=h-th-51"
     )
 
+    # 🔥 ALTYAZI VAR MI?
     has_subtitle = bool(
         SUBTITLE_ENABLED
         and subtitle_file
         and os.path.exists(subtitle_file)
     )
 
+    # 🔥 base_scale'i duruma göre kur (çift virgül hatasını önler)
     if has_subtitle:
         safe_path = _escape_ffmpeg_path(subtitle_file)
         style = build_subtitle_style()
