@@ -86,13 +86,13 @@ DUAL_AUDIO_SYNC = os.getenv("DUAL_AUDIO_SYNC", "1") == "1"
 SUBTITLE_ENABLED = os.getenv("SUBTITLE_ENABLED", "1") == "1"
 SUBTITLE_FONT_NAME = os.getenv("SUBTITLE_FONT_NAME", "DejaVu Sans")
 SUBTITLE_FONT_SIZE = os.getenv("SUBTITLE_FONT_SIZE", "10")
-SUBTITLE_PRIMARY_COLOR = os.getenv("SUBTITLE_PRIMARY_COLOR", "&H00FFFFFF")   # Beyaz (AABBGGRR)
-SUBTITLE_OUTLINE_COLOR = os.getenv("SUBTITLE_OUTLINE_COLOR", "&H00000000")   # Siyah outline
-SUBTITLE_BACK_COLOR = os.getenv("SUBTITLE_BACK_COLOR", "&H80000000")         # Yarı saydam siyah
+SUBTITLE_PRIMARY_COLOR = os.getenv("SUBTITLE_PRIMARY_COLOR", "&H00FFFFFF")
+SUBTITLE_OUTLINE_COLOR = os.getenv("SUBTITLE_OUTLINE_COLOR", "&H00000000")
+SUBTITLE_BACK_COLOR = os.getenv("SUBTITLE_BACK_COLOR", "&H80000000")
 SUBTITLE_OUTLINE = os.getenv("SUBTITLE_OUTLINE", "2")
 SUBTITLE_SHADOW = os.getenv("SUBTITLE_SHADOW", "1")
 SUBTITLE_MARGIN_V = os.getenv("SUBTITLE_MARGIN_V", "20")
-SUBTITLE_BORDER_STYLE = os.getenv("SUBTITLE_BORDER_STYLE", "1")  # 1=outline+shadow, 3=opak kutu
+SUBTITLE_BORDER_STYLE = os.getenv("SUBTITLE_BORDER_STYLE", "1")
 
 
 # ===================== KALICI RTMP ÇIKIŞ SÜRECİ =====================
@@ -111,13 +111,13 @@ class RtmpOutput:
         self.stderr_tail.clear()
         cmd = [
             'ffmpeg', '-hide_banner', '-loglevel', 'warning', '-nostats',
-            '-fflags', '+genpts+igndts',
-            '-analyzeduration', '20000000',
-            '-probesize', '20000000',
+            '-fflags', '+genpts',
+            '-analyzeduration', '30000000',
+            '-probesize', '30000000',
             '-f', 'mpegts', '-i', 'pipe:0',
             '-map', '0:v:0', '-map', '0:a:0?',
             '-c', 'copy',
-            # NOT: -bsf:v h264_mp4toannexb KALDIRILDI (header'ı bozuyordu)
+            '-bsf:v', 'h264_mp4toannexb',
             '-flvflags', 'no_duration_filesize',
             '-f', 'flv', self.rtmp_url,
         ]
@@ -174,12 +174,10 @@ def format_hms(total_seconds):
     return f"{total_seconds // 3600:02d}:{(total_seconds % 3600) // 60:02d}:{total_seconds % 60:02d}"
 
 
-# URL -> süre (sn). Bağlantı kopup aynı film yeniden denendiğinde ffprobe tekrar çalıştırılmaz.
 _DURATION_CACHE = {}
 
 
 def get_hls_duration(url, depth=0):
-    """HLS VOD listelerinde #EXTINF sürelerini toplayarak toplam süreyi hesaplar."""
     if depth > 2 or '.m3u8' not in url.lower():
         return 0.0
     try:
@@ -212,7 +210,6 @@ def get_hls_duration(url, depth=0):
 
 
 def get_video_duration_ffprobe(video_url, retries=3, timeout=15):
-    """PROFESYONEL FFPROBE SÜRE TESPİT MEKANİZMASI."""
     if video_url in _DURATION_CACHE:
         cached = _DURATION_CACHE[video_url]
         print(f"⚡ Süre önbellekten alındı: {cached:.1f} sn ({format_hms(cached)})")
@@ -304,7 +301,6 @@ def get_video_duration_ffprobe(video_url, retries=3, timeout=15):
 
 
 def get_local_state():
-    """(index, seconds, url, title) döndürür."""
     if not os.path.exists(STATE_FILE_NAME):
         print("ℹ️ Yerel state dosyası bulunamadı, 0'dan başlanıyor.")
         return 0, 0, "", ""
@@ -324,7 +320,6 @@ def get_local_state():
 
 
 def update_local_state(index, seconds, url="", title=""):
-    """Atomik yazım."""
     tmp_name = STATE_FILE_NAME + ".tmp"
     try:
         data = {
@@ -342,10 +337,6 @@ def update_local_state(index, seconds, url="", title=""):
 
 
 def get_m3u_playlist(m3u_url):
-    """
-    M3U'yu çeker. #EXTVLCOPT:sub-url=... satırını da altyazı olarak kaydeder.
-    Farklı yazımlar desteklenir: sub-url, subtitle, subs
-    """
     try:
         headers = {'User-Agent': STREAM_USER_AGENT, 'Referer': STREAM_REFERER}
         response = requests.get(m3u_url, headers=headers, timeout=15)
@@ -360,7 +351,6 @@ def get_m3u_playlist(m3u_url):
                 if line.startswith('#EXTINF'):
                     match = re.search(r',(.+)$', line)
                     pending_title = match.group(1).strip() if match else None
-                # 🔥 Altyazı satırı: #EXTVLCOPT:sub-url=... veya #EXTSUB:...
                 elif line.upper().startswith('#EXTVLCOPT:SUB-URL='):
                     pending_sub = line.split('=', 1)[1].strip()
                 elif line.upper().startswith('#EXTVLCOPT:SUBTITLE='):
@@ -394,7 +384,6 @@ def download_logo():
 
 
 def write_text_file(path, text):
-    """drawtext reload=1 için atomik yazar."""
     tmp_name = path + ".tmp"
     try:
         with open(tmp_name, 'w', encoding='utf-8') as f:
@@ -406,38 +395,70 @@ def write_text_file(path, text):
 
 # ===================== ALTYAZI FONKSİYONLARI =====================
 def vtt_to_srt(vtt_text):
-    """Basit VTT → SRT dönüştürücü."""
-    lines = vtt_text.splitlines()
+    """
+    Sağlam VTT → SRT dönüştürücü.
+    Her bloğun sonunda MUTLAKA boş satır bırakır — numara metne yapışmaz.
+    """
+    text = vtt_text.replace('\r\n', '\n').replace('\r', '\n')
+    lines = text.split('\n')
+
     out = []
     counter = 1
     i = 0
 
-    # WEBVTT başlığını ve meta satırlarını atla
+    # WEBVTT başlığı, NOTE ve STYLE bloklarını atla
     while i < len(lines):
+        line = lines[i].strip()
+        if line.startswith('WEBVTT'):
+            i += 1
+            continue
+        if line.startswith('NOTE') or line.startswith('STYLE'):
+            while i < len(lines) and lines[i].strip():
+                i += 1
+            continue
+        if line.startswith('X-TIMESTAMP-MAP') or line.startswith('Kind:') or line.startswith('Language:'):
+            i += 1
+            continue
         if '-->' in lines[i]:
             break
         i += 1
 
+    # Zaman bloklarını işle
     while i < len(lines):
-        line = lines[i]
-        if '-->' in line:
-            line = line.replace('.', ',')
-            line = re.sub(r'\s+(align|position|line|size|region):\S+', '', line)
-            out.append(str(counter))
-            out.append(line)
-            counter += 1
-        elif line.strip() and not line.startswith('NOTE') and not line.startswith('STYLE'):
-            clean = re.sub(r'<[^>]+>', '', line)
-            out.append(clean)
-        elif not line.strip() and out and out[-1] != '':
-            out.append('')
-        i += 1
+        line = lines[i].strip()
 
-    return '\n'.join(out)
+        if '-->' in line:
+            timestamp = line.replace('.', ',')
+            timestamp = re.sub(r'\s+(align|position|line|size|region|vertical):\S+', '', timestamp)
+            timestamp = timestamp.strip()
+
+            i += 1
+            text_lines = []
+            while i < len(lines) and '-->' not in lines[i]:
+                text_line = lines[i].strip()
+                if text_line:
+                    clean = re.sub(r'<[^>]+>', '', text_line)
+                    if clean.strip():
+                        text_lines.append(clean.strip())
+                i += 1
+
+            if not text_lines:
+                continue
+
+            out.append(str(counter))
+            out.append(timestamp)
+            out.extend(text_lines)
+            # BLOK SONU BOŞ SATIR — MUTLAKA
+            out.append('')
+            counter += 1
+        else:
+            i += 1
+
+    result = '\n'.join(out).rstrip() + '\n'
+    return result
 
 
 def _find_subtitle_ext(url):
-    """URL'den altyazı uzantısını bulur."""
     clean = url.lower().split('?')[0].split('#')[0]
     for e in ('.ass', '.ssa', '.vtt', '.srt'):
         if clean.endswith(e):
@@ -446,7 +467,6 @@ def _find_subtitle_ext(url):
 
 
 def _clean_subtitle_url(url):
-    """M3U yazım hatalarını temizler: baştaki ':' , boşluk, tırnak."""
     if not url:
         return ""
     url = url.strip()
@@ -456,10 +476,6 @@ def _clean_subtitle_url(url):
 
 
 def download_subtitle(sub_url, target_path=None):
-    """
-    Altyazıyı indirir. SRT / VTT / ASS / SSA destekler.
-    VTT ise otomatik SRT'ye çevirir. Başarılıysa dosya yolunu döner.
-    """
     if not sub_url:
         return None
 
@@ -485,7 +501,6 @@ def download_subtitle(sub_url, target_path=None):
 
         content = r.content
 
-        # Gzip
         if content[:2] == b'\x1f\x8b' or sub_url.lower().endswith('.gz'):
             try:
                 content = gzip.decompress(content)
@@ -501,7 +516,6 @@ def download_subtitle(sub_url, target_path=None):
                 print(f"⚠️ Gzip açma hatası: {e}")
                 return None
 
-        # Encoding tespiti
         try:
             text = content.decode('utf-8')
         except UnicodeDecodeError:
@@ -514,7 +528,6 @@ def download_subtitle(sub_url, target_path=None):
 
         text = text.lstrip('\ufeff')
 
-        # Format doğrulama
         is_ass = '[Script Info]' in text or '[Events]' in text
         is_vtt = text.lstrip().startswith('WEBVTT')
         is_srt = '-->' in text
@@ -523,7 +536,6 @@ def download_subtitle(sub_url, target_path=None):
             print("⚠️ Altyazı dosyası geçerli değil (SRT/VTT/ASS değil).")
             return None
 
-        # VTT → SRT dönüşümü (FFmpeg için en güvenli)
         if is_vtt:
             text = vtt_to_srt(text)
             target_path = "subtitle.srt"
@@ -547,7 +559,6 @@ def download_subtitle(sub_url, target_path=None):
 
 
 def cleanup_subtitle_files():
-    """Önceki filmden kalan altyazı dosyalarını temizler."""
     for f in ("subtitle.srt", "subtitle.vtt", "subtitle.ass", "subtitle.ssa"):
         if os.path.exists(f):
             try:
@@ -590,7 +601,6 @@ def write_step_summary(title, index, playlist_len, seconds, status="🟢 Yayınd
 
 
 def iter_stderr_lines(stream):
-    """FFmpeg stderr'ini hem \\r hem \\n ile böler."""
     fd = stream.fileno()
     buf = b''
     while True:
@@ -608,10 +618,6 @@ def iter_stderr_lines(stream):
 
 
 def pump_reader_to_output(reader, output):
-    """
-    Okuyucunun stdout'unu (MPEG-TS) kalıcı RTMP çıkışına aktarır.
-    🔥 İlk chunk'ı biriktirir — SPS/PPS/header tam gelsin.
-    """
     fd = reader.stdout.fileno()
     first = True
     while True:
@@ -622,7 +628,6 @@ def pump_reader_to_output(reader, output):
         if not chunk:
             break
 
-        # 🔥 İlk chunk'ı biriktir — SPS/PPS tam gelsin
         if first:
             if len(chunk) < 16384:
                 buffered = chunk
@@ -656,13 +661,11 @@ HEADERS_ARG = (
 
 
 def split_dual_url(target_url):
-    """'video;ses' biçimini ayrıştırır."""
     video_url, _, audio_url = target_url.partition(";")
     return video_url.strip(), audio_url.strip()
 
 
 def get_total_duration(target_url):
-    """Toplam süre: video URL'sinden, okunamazsa ses URL'sinden."""
     video_url, audio_url = split_dual_url(target_url)
     duration = get_video_duration_ffprobe(video_url)
     if duration > 0 or not audio_url:
@@ -698,12 +701,10 @@ def make_input_options(url):
 
 
 def _escape_ffmpeg_path(path):
-    """FFmpeg filter içinde güvenli yol."""
     return path.replace('\\', '\\\\').replace(':', '\\:').replace("'", r"\'")
 
 
 def build_subtitle_style():
-    """Altyazı stilini FFmpeg force_style formatında döner."""
     return (
         f"FontName={SUBTITLE_FONT_NAME},"
         f"FontSize={SUBTITLE_FONT_SIZE},"
@@ -713,7 +714,7 @@ def build_subtitle_style():
         f"BorderStyle={SUBTITLE_BORDER_STYLE},"
         f"Outline={SUBTITLE_OUTLINE},"
         f"Shadow={SUBTITLE_SHADOW},"
-        f"Alignment=2,"  # 2 = alt orta
+        f"Alignment=2,"
         f"MarginV={SUBTITLE_MARGIN_V}"
     )
 
@@ -743,14 +744,12 @@ def build_reader_command(target_url, seek_seconds, video_only=False, subtitle_fi
         f"fontcolor=white@{TEXT_OPACITY}:fontsize=25:x=51:y=h-th-51"
     )
 
-    # 🔥 ALTYAZI VAR MI?
     has_subtitle = bool(
         SUBTITLE_ENABLED
         and subtitle_file
         and os.path.exists(subtitle_file)
     )
 
-    # 🔥 base_scale'i duruma göre kur (çift virgül hatasını önler)
     if has_subtitle:
         safe_path = _escape_ffmpeg_path(subtitle_file)
         style = build_subtitle_style()
@@ -793,9 +792,10 @@ def build_reader_command(target_url, seek_seconds, video_only=False, subtitle_fi
             '-r', '25', '-b:v', '2500k', '-maxrate', '2500k', '-bufsize', '3000k',
             '-g', '50', '-keyint_min', '25', '-sc_threshold', '0',
             '-x264-params', 'repeat-headers=1:force-cfr=1',
+            '-bsf:v', 'h264_mp4toannexb',
             '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-ar', '44100',
             '-flush_packets', '1', '-muxdelay', '0', '-muxpreload', '0',
-            '-mpegts_flags', '+resend_headers+initial_discontinuity',
+            '-mpegts_flags', '+resend_headers',
             '-f', 'mpegts', 'pipe:1',
         ]
     )
@@ -811,7 +811,6 @@ class ReaderResult:
 
 
 def run_reader(command, output, base_seconds, total_duration_sec, ctx):
-    """Okuyucu FFmpeg'i çalıştırır, ilerlemeyi izler, sonucu döndürür."""
     process = subprocess.Popen(
         command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE
     )
@@ -878,7 +877,6 @@ def run_reader(command, output, base_seconds, total_duration_sec, ctx):
 
 
 def is_really_finished(result, base_seconds, total_duration_sec):
-    """Film GERÇEKTEN bitti mi? Return code 0 tek başına yetmez."""
     if result.returncode != 0:
         return False
 
@@ -924,7 +922,6 @@ def start_m3u_stream():
             sub_url = item.get("sub_url", "")
             playlist_len = len(playlist)
 
-            # 🔥 ALTYAZI: eski dosyaları temizle, yenisini indir
             cleanup_subtitle_files()
             subtitle_file = None
             if SUBTITLE_ENABLED and sub_url:
@@ -937,7 +934,6 @@ def start_m3u_stream():
 
             has_sub = subtitle_file is not None
 
-            # Link değiştiyse: aynı film ise geriden devam, farklıysa baştan
             if last_seconds > 0 and last_url and target_url != last_url:
                 if last_title and film_title == last_title:
                     old = last_seconds
