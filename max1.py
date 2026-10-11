@@ -111,12 +111,13 @@ class RtmpOutput:
         self.stderr_tail.clear()
         cmd = [
             'ffmpeg', '-hide_banner', '-loglevel', 'warning', '-nostats',
-            '-fflags', '+genpts+nobuffer',
-            '-analyzeduration', '3000000',
-            '-probesize', '3000000',
+            '-fflags', '+genpts+nobuffer+igndts',
+            '-analyzeduration', '15000000',
+            '-probesize', '15000000',
             '-f', 'mpegts', '-i', 'pipe:0',
             '-map', '0:v:0', '-map', '0:a:0?',
             '-c', 'copy',
+            '-bsf:v', 'h264_mp4toannexb',
             '-flvflags', 'no_duration_filesize',
             '-f', 'flv', self.rtmp_url,
         ]
@@ -444,12 +445,30 @@ def _find_subtitle_ext(url):
     return '.srt'
 
 
+def _clean_subtitle_url(url):
+    """M3U yazım hatalarını temizler: baştaki ':' , boşluk, tırnak."""
+    if not url:
+        return ""
+    url = url.strip()
+    # Baştaki ':' , boşluk, tırnak, virgül temizle
+    url = url.lstrip(': \t\'"')
+    # Sondaki tırnak ve boşlukları temizle
+    url = url.rstrip(' \t\'"')
+    return url
+
+
 def download_subtitle(sub_url, target_path=None):
     """
     Altyazıyı indirir. SRT / VTT / ASS / SSA destekler.
     VTT ise otomatik SRT'ye çevirir. Başarılıysa dosya yolunu döner.
     """
     if not sub_url:
+        return None
+
+    # 🔥 URL temizliği (baştaki ':' gibi yazım hatalarını düzeltir)
+    sub_url = _clean_subtitle_url(sub_url)
+    if not sub_url or not sub_url.startswith(('http://', 'https://')):
+        print(f"⚠️ Geçersiz altyazı URL'si: {sub_url}")
         return None
 
     ext = _find_subtitle_ext(sub_url)
