@@ -2,876 +2,692 @@ import os
 import re
 import json
 import time
-import shutil
-import threading
+import urllib.request
 import subprocess
-import requests
-
-from datetime import datetime, timezone
-
+from datetime import datetime
+from urllib.parse import urlparse
 
 # =========================================================
-# 1. RTMP AYARLARI
-# =========================================================
-
-RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101"
-STREAM_KEY = os.getenv("STREAM_KEY") or "megatv_@"
-
-STREAM_URL = f"{RTMP_URL.rstrip('/')}/{STREAM_KEY}"
-
-
-# =========================================================
-# 2. M3U VE LOGO AYARLARI
+# AYARLAR
 # =========================================================
 
 M3U_URL = (
-    "https://raw.githubusercontent.com/"
-    "ino8090/0101/refs/heads/main/deneme.m3u"
+    "https://raw.githubusercontent.com/ino8090/0101/"
+    "refs/heads/main/deneme.m3u"
 )
 
-# Buraya logonun tam adresini yaz.
-LOGO_URL = "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/file_00000000d06c8210b512e76e052d143e.png"
+LOGO_URL = (
+    "https://raw.githubusercontent.com/ino8090/0101/"
+    "refs/heads/main/1787671958979.png"
+)
 
-
-# =========================================================
-# 3. DOSYA AYARLARI
-# =========================================================
+RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101"
+STREAM_KEY = os.getenv("STREAM_KEY") or "megatv_@"
+STREAM_OUTPUT = f"{RTMP_URL.rstrip('/')}/{STREAM_KEY}"
 
 STATE_FILE = "m.json"
-WORK_DIR = "subtitle_work"
+LOGO_FILE = "maxpremier_logo.png"
 
-LOGO_FILE = os.path.join(WORK_DIR, "logo.png")
-SUBTITLE_FILE = os.path.abspath(
-    os.path.join(WORK_DIR, "current_subtitle.srt")
-)
-
-os.makedirs(WORK_DIR, exist_ok=True)
-
+RETRY_SECONDS = 10
+LOGO_WIDTH = 160
 
 # =========================================================
-# 4. VİDEO AYARLARI
-# =========================================================
-
-VIDEO_WIDTH = 1920
-VIDEO_HEIGHT = 1080
-FPS = 25
-
-VIDEO_PRESET = "veryfast"
-VIDEO_BITRATE = "4500k"
-AUDIO_BITRATE = "128k"
-
-LOGO_WIDTH = 250
-LOGO_X = 50
-LOGO_Y = 50
-
-
-# =========================================================
-# 5. ALTYAZI AYARLARI
-# =========================================================
-
-FONT_NAME = "DejaVu Sans"
-FONT_SIZE = 24
-
-FONT_COLOR = "&H00FFFFFF"
-OUTLINE_COLOR = "&H00000000"
-BACKGROUND_COLOR = "&H80000000"
-
-OUTLINE_SIZE = 2
-SHADOW_SIZE = 1
-SUBTITLE_MARGIN = 35
-
-
-# =========================================================
-# 6. GENEL AYARLAR
-# =========================================================
-
-REQUEST_TIMEOUT = 30
-STATE_SAVE_INTERVAL = 5
-RETRY_DELAY = 10
-
-USER_AGENT = "Mozilla/5.0"
-
-state_lock = threading.Lock()
-stop_requested = threading.Event()
-
-
-# =========================================================
-# 7. LOG
+# LOG
 # =========================================================
 
 def log(message):
-    print(
-        datetime.now().strftime("[%Y-%m-%d %H:%M:%S]"),
-        message,
-        flush=True
-    )
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{now}] {message}", flush=True)
 
 
 # =========================================================
-# 8. FFmpeg KONTROLÜ
+# DURUM DOSYASI
 # =========================================================
-
-def check_ffmpeg():
-    if not shutil.which("ffmpeg"):
-        raise RuntimeError("FFmpeg bulunamadı.")
-
-    if not shutil.which("ffprobe"):
-        raise RuntimeError("FFprobe bulunamadı.")
-
-    log("FFmpeg ve FFprobe hazır.")
-
-
-# =========================================================
-# 9. JSON DURUM DOSYASI
-# =========================================================
-
-def default_state():
-    return {
-        "version": 1,
-        "current_index": 0,
-        "current_url": None,
-        "current_title": None,
-        "position_seconds": 0.0,
-        "duration_seconds": 0.0,
-        "status": "idle",
-        "updated_at": None
-    }
-
 
 def load_state():
-    if not os.path.isfile(STATE_FILE):
+    if not os.path.exists(STATE_FILE):
         log("Durum dosyası bulunamadı. Yeni durum oluşturulacak.")
-        return default_state()
+
+        return {
+            "index": 0,
+            "title": "",
+            "url": "",
+            "position": 0.0,
+            "status": "starting"
+        }
 
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as file:
-            data = json.load(file)
+            state = json.load(file)
 
-        state = default_state()
-        state.update(data)
+        log("Önceki yayın durumu yüklendi.")
 
-        state["current_index"] = max(
-            0, int(state.get("current_index", 0))
-        )
-
-        state["position_seconds"] = max(
-            0.0, float(state.get("position_seconds", 0.0))
-        )
-
-        state["duration_seconds"] = max(
-            0.0, float(state.get("duration_seconds", 0.0))
-        )
-
-        log(
-            "JSON durum dosyası yüklendi. "
-            f"Son konum: {state['position_seconds']:.1f} saniye"
-        )
-
-        return state
+        return {
+            "index": int(state.get("index", 0)),
+            "title": state.get("title", ""),
+            "url": state.get("url", ""),
+            "position": float(state.get("position", 0)),
+            "status": state.get("status", "starting")
+        }
 
     except Exception as error:
-        log(f"JSON okunamadı: {error}")
-        log("Yeni durum dosyası oluşturulacak.")
-        return default_state()
+        log(f"Durum dosyası okunamadı: {error}")
+
+        return {
+            "index": 0,
+            "title": "",
+            "url": "",
+            "position": 0.0,
+            "status": "starting"
+        }
 
 
 def save_state(state):
-    with state_lock:
-        state["updated_at"] = datetime.now(
-            timezone.utc
-        ).isoformat()
+    temporary_file = STATE_FILE + ".tmp"
 
-        temp_file = STATE_FILE + ".tmp"
+    try:
+        with open(temporary_file, "w", encoding="utf-8") as file:
+            json.dump(
+                state,
+                file,
+                ensure_ascii=False,
+                indent=2
+            )
 
-        try:
-            with open(temp_file, "w", encoding="utf-8") as file:
-                json.dump(
-                    state,
-                    file,
-                    ensure_ascii=False,
-                    indent=2
-                )
-                file.flush()
-                os.fsync(file.fileno())
+        os.replace(temporary_file, STATE_FILE)
 
-            os.replace(temp_file, STATE_FILE)
-
-        except Exception as error:
-            log(f"JSON kaydetme hatası: {error}")
-
-            try:
-                if os.path.exists(temp_file):
-                    os.remove(temp_file)
-            except OSError:
-                pass
+    except Exception as error:
+        log(f"Durum kaydedilemedi: {error}")
 
 
 # =========================================================
-# 10. M3U LİSTESİNİ OKU
+# İNTERNETTEN DOSYA İNDİRME
+# =========================================================
+
+def download_file(url, destination):
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0"
+        }
+    )
+
+    with urllib.request.urlopen(request, timeout=30) as response:
+        data = response.read()
+
+    with open(destination, "wb") as file:
+        file.write(data)
+
+
+# =========================================================
+# URL TEMİZLEME
+# =========================================================
+
+def normalize_stream_line(line):
+    """
+    Örnek hatalı satır:
+    [https://site/video.m3u8;https://site/audio.m3u8.]
+    (https://site/audio.m3u8.)
+
+    Köşeli parantez ve Markdown bağlantısı varsa,
+    öncelikle görünen metin alınır.
+    """
+
+    line = line.strip()
+
+    if line.startswith("[") and "](" in line:
+        line = line[1:line.index("](")]
+
+    line = line.strip()
+
+    # Dıştaki parantezleri temizle.
+    line = line.strip("[]() \t")
+
+    # Noktalı virgül video ve ses adreslerini ayırabilir.
+    parts = []
+
+    for part in line.split(";"):
+        part = part.strip()
+
+        # Adresin sonuna yanlışlıkla eklenen noktalama işaretlerini temizle.
+        part = part.rstrip(".,;)]} \t")
+
+        if part.startswith("http://") or part.startswith("https://"):
+            parts.append(part)
+
+    return parts
+
+
+def clean_subtitle_url(url):
+    if not url:
+        return ""
+
+    url = url.strip()
+
+    if url.startswith("[") and "](" in url:
+        url = url[1:url.index("](")]
+
+    url = url.strip().strip("[]() \t")
+    url = url.rstrip(".,;)]} \t")
+
+    if url.startswith(("http://", "https://")):
+        return url
+
+    return ""
+
+
+# =========================================================
+# M3U LİSTESİNİ OKUMA
 # =========================================================
 
 def get_m3u_playlist():
-    response = requests.get(
+    log("M3U listesi indiriliyor...")
+
+    request = urllib.request.Request(
         M3U_URL,
-        timeout=REQUEST_TIMEOUT,
-        headers={"User-Agent": USER_AGENT}
+        headers={
+            "User-Agent": "Mozilla/5.0"
+        }
     )
 
-    response.raise_for_status()
+    with urllib.request.urlopen(request, timeout=30) as response:
+        content = response.read().decode(
+            "utf-8-sig",
+            errors="replace"
+        )
+
+    lines = content.splitlines()
 
     playlist = []
 
-    pending_title = None
-    pending_subtitle = None
+    current_title = "Bilinmeyen film"
+    current_subtitle = ""
 
-    for raw_line in response.text.splitlines():
+    for raw_line in lines:
         line = raw_line.strip()
 
         if not line:
             continue
 
-        if line.startswith("#EXTINF:"):
+        if line.startswith("#EXTINF"):
             if "," in line:
-                pending_title = line.split(",", 1)[1].strip()
+                current_title = line.rsplit(",", 1)[-1].strip()
             else:
-                pending_title = "İsimsiz"
+                current_title = "Bilinmeyen film"
 
-        elif line.startswith("#EXTVLCOPT:sub-url="):
-            pending_subtitle = line.split("=", 1)[1].strip()
-
-        elif line.startswith("#"):
+            current_subtitle = ""
             continue
 
-        elif line.startswith(("http://", "https://")):
-            playlist.append({
-                "title": pending_title or "İsimsiz",
-                "url": line,
-                "subtitle_url": pending_subtitle
-            })
+        if line.startswith("#EXTVLCOPT:sub-url="):
+            current_subtitle = clean_subtitle_url(
+                line.split("=", 1)[1]
+            )
+            continue
 
-            pending_title = None
-            pending_subtitle = None
+        if line.startswith("#"):
+            continue
+
+        urls = normalize_stream_line(line)
+
+        if not urls:
+            continue
+
+        video_url = urls[0]
+
+        # İkinci adres varsa ayrı ses kaynağı olarak kullan.
+        audio_url = urls[1] if len(urls) >= 2 else ""
+
+        playlist.append({
+            "title": current_title,
+            "url": video_url,
+            "audio_url": audio_url,
+            "subtitle_url": current_subtitle
+        })
+
+        log(f"M3U kaydı: {current_title}")
+
+        if audio_url:
+            log("Ayrı ses adresi bulundu.")
+
+        current_title = "Bilinmeyen film"
+        current_subtitle = ""
+
+    if not playlist:
+        raise RuntimeError(
+            "M3U listesinde geçerli yayın adresi bulunamadı."
+        )
+
+    log(f"Toplam {len(playlist)} kayıt bulundu.")
 
     return playlist
 
 
 # =========================================================
-# 11. LOGO İNDİRME
+# FFMPEG KONTROLÜ
 # =========================================================
 
-def download_logo():
-    if (
-        not LOGO_URL
-        or LOGO_URL == "LOGO_URL_BURAYA"
-        or not LOGO_URL.startswith(("http://", "https://"))
-    ):
-        log("Logo adresi ayarlanmamış. Logosuz devam edilecek.")
-        return None
+def check_ffmpeg():
+    try:
+        subprocess.run(
+            ["ffmpeg", "-version"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True
+        )
+
+        subprocess.run(
+            ["ffprobe", "-version"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True
+        )
+
+        log("FFmpeg ve FFprobe hazır.")
+
+    except Exception:
+        raise RuntimeError(
+            "FFmpeg veya FFprobe bulunamadı. "
+            "Çalıştırma ortamına FFmpeg kurulmalı."
+        )
+
+
+# =========================================================
+# LOGO
+# =========================================================
+
+def prepare_logo():
+    if os.path.exists(LOGO_FILE):
+        if os.path.getsize(LOGO_FILE) > 0:
+            log("Mevcut logo kullanılacak.")
+            return True
 
     try:
-        response = requests.get(
-            LOGO_URL,
-            timeout=REQUEST_TIMEOUT,
-            headers={"User-Agent": USER_AGENT}
-        )
+        download_file(LOGO_URL, LOGO_FILE)
 
-        response.raise_for_status()
-
-        if not response.content:
-            raise ValueError("Logo dosyası boş.")
-
-        with open(LOGO_FILE, "wb") as file:
-            file.write(response.content)
-
-        check = subprocess.run(
-            [
-                "ffprobe",
-                "-v", "error",
-                "-select_streams", "v:0",
-                "-show_entries", "stream=codec_type",
-                "-of", "default=noprint_wrappers=1:nokey=1",
-                LOGO_FILE
-            ],
-            capture_output=True,
-            text=True,
-            timeout=15
-        )
-
-        if check.returncode != 0 or "video" not in check.stdout:
-            raise ValueError("İndirilen dosya geçerli bir görsel değil.")
+        if os.path.getsize(LOGO_FILE) == 0:
+            raise RuntimeError("Logo dosyası boş.")
 
         log("Logo indirildi.")
-        return LOGO_FILE
+        return True
 
     except Exception as error:
         log(f"Logo indirilemedi: {error}")
-        return None
+        return False
 
 
 # =========================================================
-# 12. ALTYAZI İNDİRME
+# ALTYAZI
 # =========================================================
 
-def download_subtitle(subtitle_url):
-    if os.path.exists(SUBTITLE_FILE):
-        os.remove(SUBTITLE_FILE)
-
+def prepare_subtitle(subtitle_url):
     if not subtitle_url:
         log("Bu film için harici altyazı belirtilmemiş.")
         return None
 
     try:
-        response = requests.get(
-            subtitle_url,
-            timeout=REQUEST_TIMEOUT,
-            headers={"User-Agent": USER_AGENT}
-        )
+        parsed = urlparse(subtitle_url)
 
-        response.raise_for_status()
+        extension = os.path.splitext(parsed.path)[1].lower()
 
-        if not response.content:
-            raise ValueError("Altyazı dosyası boş.")
+        if extension not in (".srt", ".vtt", ".ass", ".ssa"):
+            extension = ".srt"
 
-        decoded = None
+        subtitle_file = "maxpremier_subtitle" + extension
 
-        for encoding in ("utf-8-sig", "utf-8", "cp1254", "latin-1"):
-            try:
-                decoded = response.content.decode(encoding)
-                break
-            except UnicodeDecodeError:
-                continue
+        download_file(subtitle_url, subtitle_file)
 
-        if decoded is None:
-            raise ValueError("Altyazı okunamadı.")
+        if os.path.getsize(subtitle_file) == 0:
+            raise RuntimeError("Altyazı dosyası boş.")
 
-        decoded = decoded.replace("\r\n", "\n").replace("\r", "\n")
-        decoded = decoded.lstrip("\ufeff")
+        log("Harici altyazı indirildi.")
 
-        # WebVTT başlığını kaldır.
-        decoded = re.sub(
-            r"^\s*WEBVTT[^\n]*\n",
-            "",
-            decoded,
-            count=1
-        )
-
-        # WebVTT zaman satırlarının ek ayarlarını kaldır.
-        decoded = re.sub(
-            r"(-->\s*\d{2}:\d{2}:\d{2}[.,]\d{3})[^\n]*",
-            r"\1",
-            decoded
-        )
-
-        if "<html" in decoded[:1000].lower():
-            raise ValueError("Altyazı yerine HTML sayfası indirildi.")
-
-        if not re.search(
-            r"\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->",
-            decoded
-        ):
-            raise ValueError("Geçerli altyazı zaman damgası bulunamadı.")
-
-        with open(
-            SUBTITLE_FILE,
-            "w",
-            encoding="utf-8-sig"
-        ) as file:
-            file.write(decoded)
-
-        log("Altyazı hazır.")
-        return SUBTITLE_FILE
+        return os.path.abspath(subtitle_file)
 
     except Exception as error:
         log(f"Altyazı indirilemedi: {error}")
-
-        if os.path.exists(SUBTITLE_FILE):
-            os.remove(SUBTITLE_FILE)
-
         return None
 
 
-# =========================================================
-# 13. VİDEO SÜRESİNİ BUL
-# =========================================================
-
-def get_video_duration(video_url):
-    try:
-        result = subprocess.run(
-            [
-                "ffprobe",
-                "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
-                video_url
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-
-        if result.returncode != 0:
-            return 0.0
-
-        value = result.stdout.strip()
-
-        if not value or value.upper() == "N/A":
-            return 0.0
-
-        duration = float(value)
-
-        if duration < 0:
-            return 0.0
-
-        return duration
-
-    except Exception as error:
-        log(f"Video süresi okunamadı: {error}")
-        return 0.0
-
-
-# =========================================================
-# 14. FFmpeg FİLTRE YOLU
-# =========================================================
-
 def escape_filter_path(path):
-    path = os.path.abspath(path)
+    """
+    FFmpeg filtre yolundaki özel karakterleri kaçırır.
+    """
 
+    path = os.path.abspath(path)
     path = path.replace("\\", "\\\\")
     path = path.replace(":", "\\:")
     path = path.replace("'", "\\'")
     path = path.replace(",", "\\,")
+    path = path.replace("[", "\\[")
+    path = path.replace("]", "\\]")
 
     return path
 
 
 # =========================================================
-# 15. FFmpeg KOMUTUNU OLUŞTUR
+# FFMPEG KOMUTU
 # =========================================================
 
-def build_ffmpeg_command(item, seek_seconds, logo_path, subtitle_path):
-    command = [
-        "ffmpeg",
-        "-hide_banner",
-        "-nostdin",
-        "-loglevel", "warning",
-        "-nostats",
-        "-progress", "pipe:1",
-        "-re"
+def build_ffmpeg_command(item, logo_enabled, subtitle_file, position):
+    video_url = item["url"]
+    audio_url = item.get("audio_url", "")
+
+    command = ["ffmpeg", "-hide_banner", "-loglevel", "info"]
+
+    # Video girdisi.
+    if position > 0:
+        command += ["-ss", str(position)]
+
+    command += [
+        "-reconnect", "1",
+        "-reconnect_streamed", "1",
+        "-reconnect_delay_max", "5",
+        "-i", video_url
     ]
 
-    # Başlangıç zamanını girişten önce uygula.
-    if seek_seconds > 0:
-        command.extend([
-            "-ss", str(max(0, seek_seconds))
-        ])
+    # Ayrı ses girdisi varsa video ile aynı konumdan başlat.
+    audio_input_index = 0
 
-    command.extend([
-        "-i", item["url"]
-    ])
+    if audio_url:
+        if position > 0:
+            command += ["-ss", str(position)]
 
-    has_logo = bool(
-        logo_path and os.path.isfile(logo_path)
-    )
+        command += [
+            "-reconnect", "1",
+            "-reconnect_streamed", "1",
+            "-reconnect_delay_max", "5",
+            "-i", audio_url
+        ]
 
-    if has_logo:
-        command.extend([
-            "-loop", "1",
-            "-framerate", str(FPS),
-            "-i", logo_path
-        ])
+        audio_input_index = 1
 
-    filters = [
-        (
-            f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT}:"
-            "force_original_aspect_ratio=decrease"
-        ),
-        (
-            f"pad={VIDEO_WIDTH}:{VIDEO_HEIGHT}:"
-            "(ow-iw)/2:(oh-ih)/2:black"
-        ),
-        f"fps={FPS}"
-    ]
+    # Logo girdisi.
+    logo_input_index = None
 
-    if subtitle_path and os.path.isfile(subtitle_path):
-        subtitle_path_escaped = escape_filter_path(subtitle_path)
+    if logo_enabled:
+        logo_input_index = 2 if audio_url else 1
+        command += ["-i", LOGO_FILE]
 
-        force_style = (
-            f"FontName={FONT_NAME},"
-            f"FontSize={FONT_SIZE},"
-            f"PrimaryColour={FONT_COLOR},"
-            f"OutlineColour={OUTLINE_COLOR},"
-            f"BackColour={BACKGROUND_COLOR},"
-            "BorderStyle=1,"
-            f"Outline={OUTLINE_SIZE},"
-            f"Shadow={SHADOW_SIZE},"
-            "Alignment=2,"
-            f"MarginV={SUBTITLE_MARGIN}"
+    # Filtre zinciri.
+    filters = []
+
+    if subtitle_file:
+        escaped_subtitle = escape_filter_path(subtitle_file)
+
+        filters.append(
+            f"subtitles=filename='{escaped_subtitle}'"
+        )
+
+    if logo_enabled:
+        filters.append(
+            f"[{logo_input_index}:v]"
+            f"scale={LOGO_WIDTH}:-1[logo]"
         )
 
         filters.append(
-            f"subtitles='{subtitle_path_escaped}':"
-            f"force_style='{force_style}'"
+            f"[0:v]{','.join(filters) if filters else 'null'}[base]"
         )
 
-    filter_complex = f"[0:v]{','.join(filters)}[base]"
-
-    if has_logo:
-        filter_complex += (
-            f";[1:v]scale={LOGO_WIDTH}:-1[logo]"
-            f";[base][logo]overlay={LOGO_X}:{LOGO_Y}[outv]"
+        filters.append(
+            "[base][logo]overlay=W-w-20:20[vout]"
         )
 
-        video_map = "[outv]"
+        command += [
+            "-filter_complex",
+            ";".join(filters),
+            "-map", "[vout]"
+        ]
+
+    elif subtitle_file:
+        command += [
+            "-vf",
+            ",".join(filters),
+            "-map", "0:v:0"
+        ]
 
     else:
-        video_map = "[base]"
+        command += [
+            "-map", "0:v:0"
+        ]
 
-    command.extend([
-        "-filter_complex", filter_complex,
-        "-map", video_map,
-        "-map", "0:a:0?",
+    # Ses kaynağını doğru girdiden al.
+    if audio_url:
+        command += [
+            "-map", f"{audio_input_index}:a:0?"
+        ]
+    else:
+        command += [
+            "-map", "0:a:0?"
+        ]
+
+    # Yayın kodlaması.
+    command += [
         "-c:v", "libx264",
-        "-preset", VIDEO_PRESET,
-        "-b:v", VIDEO_BITRATE,
+        "-preset", "veryfast",
+        "-tune", "zerolatency",
         "-pix_fmt", "yuv420p",
-        "-r", str(FPS),
         "-c:a", "aac",
-        "-b:a", AUDIO_BITRATE,
+        "-b:a", "128k",
         "-ar", "44100",
         "-f", "flv",
-        STREAM_URL
-    ])
+        STREAM_OUTPUT
+    ]
 
     return command
 
 
 # =========================================================
-# 16. BİR FİLMİ KALDIĞI YERDEN YAYINLA
+# FFMPEG ÇALIŞTIRMA
 # =========================================================
 
-def publish_video(item, state, logo_path):
-    duration = get_video_duration(item["url"])
-
-    seek_seconds = max(
-        0.0,
-        float(state.get("position_seconds", 0.0))
+def parse_ffmpeg_time(line):
+    match = re.search(
+        r"time=(\d+):(\d+):(\d+(?:\.\d+)?)",
+        line
     )
 
-    # Film bitmeye çok yakınsa baştan oynatmak yerine
-    # ana döngünün bir sonraki filme geçmesini sağla.
-    if duration > 0 and seek_seconds >= duration - 5:
-        log("Kaydedilmiş film bitmiş. Sonraki filme geçilecek.")
-        return "finished"
+    if not match:
+        return None
 
-    subtitle_path = download_subtitle(item.get("subtitle_url"))
+    hours = int(match.group(1))
+    minutes = int(match.group(2))
+    seconds = float(match.group(3))
 
-    state["current_url"] = item["url"]
-    state["current_title"] = item["title"]
-    state["duration_seconds"] = duration
-    state["status"] = "starting"
+    return hours * 3600 + minutes * 60 + seconds
+
+
+def run_film(item, state, logo_enabled):
+    title = item["title"]
+
+    position = float(state.get("position", 0))
+
+    subtitle_file = prepare_subtitle(
+        item.get("subtitle_url", "")
+    )
+
+    log(f"Film: {title}")
+    log(f"Devam konumu: {position:.1f} saniye")
+
+    state["title"] = title
+    state["url"] = item["url"]
+    state["status"] = "playing"
 
     save_state(state)
 
-    log(f"Film: {item['title']}")
-    log(f"Devam konumu: {seek_seconds:.1f} saniye")
-
     command = build_ffmpeg_command(
-        item,
-        seek_seconds,
-        logo_path,
-        subtitle_path
+        item=item,
+        logo_enabled=logo_enabled,
+        subtitle_file=subtitle_file,
+        position=position
     )
+
+    log("FFmpeg başlatılıyor...")
+
+    log(
+        "Video adresi: "
+        + item["url"]
+    )
+
+    if item.get("audio_url"):
+        log(
+            "Ses adresi: "
+            + item["audio_url"]
+        )
 
     try:
         process = subprocess.Popen(
             command,
-            stdout=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
-            bufsize=1
+            bufsize=1,
+            universal_newlines=True
         )
 
-    except Exception as error:
-        log(f"FFmpeg başlatılamadı: {error}")
-        state["status"] = "error"
-        save_state(state)
-        return "retry"
+        last_save_time = time.time()
+        last_position = position
 
-    stderr_lines = []
+        for line in process.stderr:
+            line = line.rstrip()
 
-    def read_stderr():
-        try:
-            for line in process.stderr:
-                line = line.rstrip()
+            if line:
+                print(f"[FFmpeg] {line}", flush=True)
 
-                if line:
-                    stderr_lines.append(line)
-                    log("[FFmpeg] " + line)
+            current_time = parse_ffmpeg_time(line)
 
-                    # Belleğin sınırsız büyümesini önle.
-                    if len(stderr_lines) > 100:
-                        del stderr_lines[:50]
+            if current_time is not None:
+                last_position = current_time
 
-        except Exception:
-            pass
-
-    stderr_thread = threading.Thread(
-        target=read_stderr,
-        daemon=True
-    )
-
-    stderr_thread.start()
-
-    last_save_time = time.monotonic()
-    last_position = seek_seconds
-    progress_position = seek_seconds
-
-    state["status"] = "running"
-    save_state(state)
-
-    try:
-        for line in process.stdout:
-            if stop_requested.is_set():
-                break
-
-            line = line.strip()
-
-            if line.startswith("out_time="):
-                timestamp = line.split("=", 1)[1].strip()
-
-                match = re.match(
-                    r"(\d+):(\d+):(\d+)(?:\.(\d+))?",
-                    timestamp
-                )
-
-                if match:
-                    hours = int(match.group(1))
-                    minutes = int(match.group(2))
-                    seconds = int(match.group(3))
-
-                    fraction = match.group(4) or "0"
-
-                    if fraction:
-                        fraction = float("0." + fraction)
-                    else:
-                        fraction = 0.0
-
-                    elapsed = (
-                        hours * 3600
-                        + minutes * 60
-                        + seconds
-                        + fraction
-                    )
-
-                    # -ss girişten önce uygulandığı için,
-                    # FFmpeg'in gösterdiği süreye seek eklenir.
-                    absolute_position = seek_seconds + elapsed
-
-                    if absolute_position >= last_position:
-                        progress_position = absolute_position
-
-            if time.monotonic() - last_save_time >= STATE_SAVE_INTERVAL:
-                state["position_seconds"] = progress_position
-                state["status"] = "running"
+            if time.time() - last_save_time >= 5:
+                state["position"] = last_position
+                state["status"] = "playing"
 
                 save_state(state)
 
-                last_position = progress_position
-                last_save_time = time.monotonic()
-
-        if stop_requested.is_set():
-            try:
-                process.terminate()
-                process.wait(timeout=10)
-            except Exception:
-                try:
-                    process.kill()
-                except Exception:
-                    pass
-
-            state["position_seconds"] = progress_position
-            state["status"] = "stopped"
-            save_state(state)
-
-            return "stopped"
+                last_save_time = time.time()
 
         return_code = process.wait()
 
-        stderr_thread.join(timeout=2)
-
-        state["position_seconds"] = progress_position
+        state["position"] = last_position
 
         if return_code == 0:
-            state["position_seconds"] = 0.0
-            state["status"] = "finished"
+            log(
+                f"Film tamamlandı: {title}"
+            )
+
+            state["position"] = 0.0
+            state["status"] = "completed"
 
             save_state(state)
 
-            log("Film tamamlandı.")
-            return "finished"
-
-        state["status"] = "retry"
-        save_state(state)
+            return True
 
         log(
             f"FFmpeg {return_code} koduyla kapandı. "
-            f"Kaydedilen konum: {progress_position:.1f} saniye"
+            f"Kaydedilen konum: {last_position:.1f} saniye"
         )
 
-        return "retry"
+        state["status"] = "error"
 
-    except KeyboardInterrupt:
-        stop_requested.set()
-
-        try:
-            process.terminate()
-            process.wait(timeout=10)
-        except Exception:
-            try:
-                process.kill()
-            except Exception:
-                pass
-
-        state["position_seconds"] = progress_position
-        state["status"] = "stopped"
         save_state(state)
 
-        return "stopped"
+        return False
+
+    except Exception as error:
+        log(f"FFmpeg çalıştırma hatası: {error}")
+
+        state["status"] = "error"
+        save_state(state)
+
+        return False
 
     finally:
-        if process.stdout:
-            process.stdout.close()
-
-        if process.stderr:
-            process.stderr.close()
-
-        if os.path.exists(SUBTITLE_FILE):
+        if subtitle_file and os.path.exists(subtitle_file):
             try:
-                os.remove(SUBTITLE_FILE)
+                os.remove(subtitle_file)
             except OSError:
                 pass
 
 
 # =========================================================
-# 17. ANA PROGRAM
+# ANA PROGRAM
 # =========================================================
 
 def main():
     check_ffmpeg()
 
     state = load_state()
-    logo_path = download_logo()
 
-    while not stop_requested.is_set():
+    logo_enabled = prepare_logo()
+
+    playlist = get_m3u_playlist()
+
+    # Kayıtlı indeks geçerli aralıkta değilse başa dön.
+    if not 0 <= state["index"] < len(playlist):
+        state["index"] = 0
+        state["position"] = 0.0
+
+    log("Yayın sistemi başlatıldı.")
+
+    while True:
         try:
-            playlist = get_m3u_playlist()
-
             if not playlist:
-                log("M3U listesinde film bulunamadı.")
-                time.sleep(RETRY_DELAY)
+                log("Oynatma listesi boş.")
+                time.sleep(RETRY_SECONDS)
+                playlist = get_m3u_playlist()
                 continue
 
-            # Önceki kaydedilen filmi URL ile bul.
-            saved_url = state.get("current_url")
-            saved_index = None
+            index = state["index"] % len(playlist)
+            item = playlist[index]
 
-            if saved_url:
-                for index, item in enumerate(playlist):
-                    if item["url"] == saved_url:
-                        saved_index = index
-                        break
+            success = run_film(
+                item=item,
+                state=state,
+                logo_enabled=logo_enabled
+            )
 
-            if saved_index is not None:
-                current_index = saved_index
-
-            else:
-                current_index = min(
-                    int(state.get("current_index", 0)),
-                    len(playlist) - 1
-                )
-
-                if saved_url:
-                    log(
-                        "Kaydedilmiş film listede bulunamadı. "
-                        "Kaydedilen liste konumundan devam edilecek."
-                    )
-
-                    state["position_seconds"] = 0.0
-
-            while current_index < len(playlist):
-                if stop_requested.is_set():
-                    break
-
-                item = playlist[current_index]
-
-                state["current_index"] = current_index
-                state["current_url"] = item["url"]
-                state["current_title"] = item["title"]
+            if success:
+                # Film bittiğinde sonraki kayda geç.
+                state["index"] = (index + 1) % len(playlist)
+                state["position"] = 0.0
+                state["status"] = "starting"
 
                 save_state(state)
 
-                result = publish_video(
-                    item,
-                    state,
-                    logo_path
+            else:
+                # Hata durumunda aynı film yeniden denenir.
+                log(
+                    f"{RETRY_SECONDS} saniye sonra "
+                    "aynı film yeniden denenecek."
                 )
 
-                if result == "stopped":
-                    return
+                time.sleep(RETRY_SECONDS)
 
-                if result == "finished":
-                    current_index += 1
+                # İsteğe bağlı: yayın listesi güncellenmişse
+                # yeni listeyi tekrar yükle.
+                try:
+                    playlist = get_m3u_playlist()
 
-                    state["current_index"] = current_index
-                    state["position_seconds"] = 0.0
+                    if not 0 <= state["index"] < len(playlist):
+                        state["index"] = 0
+                        state["position"] = 0.0
 
-                    if current_index < len(playlist):
-                        state["current_url"] = playlist[current_index]["url"]
-                        state["current_title"] = playlist[current_index]["title"]
-                    else:
-                        state["current_url"] = None
-                        state["current_title"] = None
-
-                    save_state(state)
-                    time.sleep(2)
-
-                elif result == "retry":
-                    log(
-                        f"{RETRY_DELAY} saniye sonra "
-                        "aynı film yeniden denenecek."
-                    )
-                    time.sleep(RETRY_DELAY)
-
-                    # Aynı film ve kaydedilmiş konum korunur.
-
-            if stop_requested.is_set():
-                break
-
-            # Listenin sonuna gelindiğinde yeni tur başlat.
-            state["current_index"] = 0
-            state["current_url"] = None
-            state["current_title"] = None
-            state["position_seconds"] = 0.0
-            state["status"] = "idle"
-
-            save_state(state)
-
-            log("M3U listesinin sonuna ulaşıldı. Yeni tur başlıyor.")
-            time.sleep(2)
+                except Exception as error:
+                    log(f"M3U yeniden okunamadı: {error}")
 
         except KeyboardInterrupt:
-            stop_requested.set()
+            log("Program kullanıcı tarafından durduruldu.")
             state["status"] = "stopped"
             save_state(state)
             break
 
         except Exception as error:
-            log(f"Ana program hatası: {error}")
+            log(f"Genel hata: {error}")
+
             state["status"] = "error"
             save_state(state)
-            time.sleep(RETRY_DELAY)
 
-    log("Program durduruldu.")
+            time.sleep(RETRY_SECONDS)
 
 
 if __name__ == "__main__":
