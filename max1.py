@@ -21,7 +21,7 @@ RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/deneme.m3u"
 LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/file_000000007be48210a068edefa7260629.png"
 
-STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "m.json")
+STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "mega.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
 
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -34,6 +34,30 @@ BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/D
 
 # Encode hızı (CPU yetmiyorsa superfast/ultrafast kullan)
 X264_PRESET = os.getenv("X264_PRESET", "superfast")
+
+# ===================== GLOBAL STATE TAKİBİ =====================
+current_active_index = 0
+current_active_seconds = 0
+current_active_url = ""
+current_active_title = ""
+
+def save_state_on_exit():
+    """Script kapanırken son konumu state dosyasına anında yazar."""
+    if current_active_title:
+        try:
+            data = {
+                "last_index": int(current_active_index),
+                "last_seconds": int(current_active_seconds),
+                "last_url": current_active_url,
+                "last_title": current_active_title
+            }
+            with open(STATE_FILE_NAME, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            print("💾 Çıkış yapıldı, son durum state dosyasına güvenle kaydedildi.")
+        except Exception as e:
+            print(f"⚠️ Çıkışta state yazma hatası: {e}")
+
+atexit.register(save_state_on_exit)
 
 def format_hms(total_seconds):
     """Saniyeyi SS:DD:SS formatına çevirir."""
@@ -57,8 +81,13 @@ def get_local_state():
     return 0, 0, "", ""
 
 def update_local_state(index, seconds, url="", title=""):
+    global current_active_index, current_active_seconds, current_active_url, current_active_title
+    current_active_index = int(index)
+    current_active_seconds = int(seconds)
+    current_active_url = url
+    current_active_title = title
     try:
-        data = {"last_index": int(index), "last_seconds": int(seconds), "last_url": url, "last_title": title}
+        data = {"last_index": current_active_index, "last_seconds": current_active_seconds, "last_url": current_active_url, "last_title": current_active_title}
         with open(STATE_FILE_NAME, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
@@ -178,7 +207,7 @@ def _stderr_reader(pipe, q):
     except Exception:
         pass
     finally:
-        q.put(None)  # bitiş işareti
+        q.put(None)
 
 def get_media_duration(url):
     """ffprobe ile içeriğin toplam süresini (sn) bulur; bulunamazsa None döner."""
@@ -230,10 +259,6 @@ def stop_publisher(p):
             pass
 
 def start_publisher():
-    """
-    Kalıcı RTMP bağlantısı: tek bir FFmpeg süreci stdin'den MPEG-TS okur ve RTMP'ye kopyalar (-c copy).
-    Filmler arası geçişte sadece 'film FFmpeg'i' değişir, bu süreç ve RTMP bağlantısı açık kalır.
-    """
     cmd = [
         'ffmpeg',
         '-hide_banner',
@@ -241,7 +266,6 @@ def start_publisher():
         '-fflags', '+genpts',
         '-analyzeduration', '3000000',
         '-probesize', '3000000',
-        # Film değişince zaman damgaları başa sarar; 1 sn'den büyük sıçramalar otomatik düzeltilir
         '-dts_delta_threshold', '1',
         '-f', 'mpegts',
         '-i', 'pipe:0',
@@ -273,6 +297,7 @@ def start_m3u_stream():
     download_logo()
 
     current_index, last_seconds, last_url, last_title = get_local_state()
+    update_local_state(current_index, last_seconds, last_url, last_title)
     print(f"💾 Kayıtlı durum    : sıra={current_index + 1}, süre={format_hms(last_seconds)}, film='{last_title}'")
 
     duration_cache = {}
@@ -292,7 +317,6 @@ def start_m3u_stream():
             time.sleep(10)
             continue
 
-        # Kayıtlı filmi ADIYLA doğrula (link değişmiş olsa da önemli değil)
         if last_seconds > 0 and last_title:
             if current_index >= len(playlist) or playlist[current_index]["title"] != last_title:
                 found_index = next((i for i, it in enumerate(playlist) if it["title"] == last_title), None)
@@ -316,15 +340,13 @@ def start_m3u_stream():
 
         active_sub_file = download_subtitle(sub_url)
 
-        # NOT: Link değişmesi önemli değil; baştan başlatma kararı sadece film ADINA göre verilir.
-
         if last_seconds > 0:
             print(f"⏩ '{film_title}' için {current_index + 1}. sıradan, {format_hms(last_seconds)} konumundan devam edilecek.")
 
         last_url = target_stream_url
         last_title = film_title
+        update_local_state(current_index, last_seconds, last_url, last_title)
 
-        # Film süresini bul (erken biten yayını "film bitti" sanmamak için)
         if target_stream_url not in duration_cache:
             duration_cache[target_stream_url] = get_media_duration(target_stream_url)
         film_duration = duration_cache[target_stream_url]
@@ -344,8 +366,6 @@ def start_m3u_stream():
             f"Origin: https://vidmody.com\r\n"
         )
 
-        # -readrate 1: -re yerine, gerçek zamanlı okuma hızı (FFmpeg 5.0+ gerekir)
-        # NOT: '-reconnect_at_eof' kaldırıldı (film sonunda sonsuz yeniden bağlanma/donma yapabiliyordu)
         input_options = [
             '-readrate', '1',
             '-fflags', '+genpts+discardcorrupt',
@@ -383,7 +403,6 @@ def start_m3u_stream():
 
         has_logo1 = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
 
-        # reload=1 kaldırıldı: başlık yayın boyunca değişmiyor, her karede diskten okumak gereksiz yük
         title_drawtext = (
             f"drawtext=textfile='title.txt':fontfile='{BOLD_FONT_PATH}':"
             f"fontcolor=white@{TEXT_OPACITY}:fontsize=30:"
@@ -458,7 +477,6 @@ def start_m3u_stream():
             'pipe:1'
         ]
 
-        # --- Kalıcı RTMP publisher: yoksa/ölmüşse başlat, yaşıyorsa DOKUNMA ---
         if publisher is None or publisher.poll() is not None or force_restart_publisher:
             stop_publisher(publisher)
             publisher, pub_state = start_publisher()
@@ -469,7 +487,6 @@ def start_m3u_stream():
 
         print("▶ FFmpeg ve Watchdog Güvenlik Katmanı Başlatıldı...")
 
-        # Film FFmpeg'i çıktısını doğrudan publisher'ın stdin'ine yazar
         process = subprocess.Popen(
             command,
             stderr=subprocess.PIPE,
@@ -478,7 +495,6 @@ def start_m3u_stream():
             bufsize=1
         )
 
-        # stderr ayrı thread'de okunuyor -> watchdog artık kilitlenmiyor
         line_queue = queue.Queue()
         threading.Thread(target=_stderr_reader, args=(process.stderr, line_queue), daemon=True).start()
 
@@ -499,7 +515,7 @@ def start_m3u_stream():
                 line = ""
             else:
                 if line is None:
-                    break  # FFmpeg kapandı
+                    break
                 stderr_tail.append(line.rstrip())
 
             if line and "time=" in line:
@@ -515,12 +531,12 @@ def start_m3u_stream():
 
                     now = time.time()
 
-                    # Sadece süre gerçekten ilerlediyse "ilerleme var" say
                     if played_seconds > last_played_seconds:
                         last_played_seconds = played_seconds
                         last_progress_time = now
 
-                    if now - last_save_time > 30:
+                    # Süreyi her 10 saniyede bir güncelle ve kaydet
+                    if now - last_save_time > 10:
                         update_local_state(current_index, current_stream_seconds, target_stream_url, film_title)
                         last_save_time = now
 
@@ -561,7 +577,6 @@ def start_m3u_stream():
             process.kill()
             process.wait()
 
-        # FFmpeg 0 koduyla çıktı ama film gerçekten bitmedi mi? (kaynak bağlantıyı erken kapatmış olabilir)
         early_end = False
         if process.returncode == 0 and not publisher_died:
             if film_duration:
@@ -582,7 +597,7 @@ def start_m3u_stream():
             update_local_state(current_index, 0, "", "")
             consecutive_fast_failures = 0
             freeze_streak = 0
-            continue  # RTMP açık kalsın: beklemeden sıradaki filme geç
+            continue
         else:
             print(f"⚠️ Yayın koptu veya donma nedeniyle yeniden başlatılıyor (Return Code: {process.returncode}).")
             if stderr_tail:
@@ -601,7 +616,6 @@ def start_m3u_stream():
             last_url = target_stream_url
             update_local_state(current_index, last_seconds, last_url, film_title)
 
-            # Üst üste donma: sorun RTMP tarafında olabilir, publisher'ı da yenile
             if froze:
                 freeze_streak += 1
             elif duration_this_attempt >= 60:
