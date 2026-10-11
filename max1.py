@@ -46,18 +46,19 @@ def format_hms(total_seconds):
 def get_local_state():
     if os.path.exists(STATE_FILE_NAME):
         if os.path.getsize(STATE_FILE_NAME) == 0:
-            return 0, 0, ""
+            return 0, 0, "", ""
         try:
             with open(STATE_FILE_NAME, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return data.get("last_index", 0), data.get("last_seconds", 0), data.get("last_url", "")
+                return (data.get("last_index", 0), data.get("last_seconds", 0),
+                        data.get("last_url", ""), data.get("last_title", ""))
         except Exception as e:
             print(f"⚠️ Yerel state okuma hatası: {e}")
-    return 0, 0, ""
+    return 0, 0, "", ""
 
-def update_local_state(index, seconds, url=""):
+def update_local_state(index, seconds, url="", title=""):
     try:
-        data = {"last_index": int(index), "last_seconds": int(seconds), "last_url": url}
+        data = {"last_index": int(index), "last_seconds": int(seconds), "last_url": url, "last_title": title}
         with open(STATE_FILE_NAME, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
@@ -250,7 +251,8 @@ def start_m3u_stream():
 
     download_logo()
 
-    current_index, last_seconds, last_url = get_local_state()
+    current_index, last_seconds, last_url, last_title = get_local_state()
+    print(f"💾 Kayıtlı durum    : sıra={current_index + 1}, süre={format_hms(last_seconds)}, film='{last_title}'")
 
     publisher = None
     pub_state = None
@@ -267,10 +269,22 @@ def start_m3u_stream():
             time.sleep(10)
             continue
 
+        # Kayıtlı filmi ADIYLA doğrula (link değişmiş olsa da önemli değil)
+        if last_seconds > 0 and last_title:
+            if current_index >= len(playlist) or playlist[current_index]["title"] != last_title:
+                found_index = next((i for i, it in enumerate(playlist) if it["title"] == last_title), None)
+                if found_index is not None:
+                    print(f"🔎 '{last_title}' playlist'te {found_index + 1}. sıraya taşınmış, oradan devam edilecek.")
+                    current_index = found_index
+                else:
+                    print(f"🔄 '{last_title}' adlı film playlist'te yok (ad değişmiş), {current_index + 1}. sıradaki film baştan başlatılacak.")
+                    last_seconds = 0
+
         if current_index >= len(playlist):
             current_index = 0
             last_seconds = 0
             last_url = ""
+            last_title = ""
 
         current_item = playlist[current_index]
         target_stream_url = current_item["url"]
@@ -279,11 +293,13 @@ def start_m3u_stream():
 
         active_sub_file = download_subtitle(sub_url)
 
-        if last_seconds > 0 and last_url and target_stream_url != last_url:
-            print(f"🔄 Bu sıradaki ({current_index + 1}) içeriğin linki değişmiş, video baştan başlatılacak.")
-            last_seconds = 0
+        # NOT: Link değişmesi önemli değil; baştan başlatma kararı sadece film ADINA göre verilir.
+
+        if last_seconds > 0:
+            print(f"⏩ '{film_title}' için {current_index + 1}. sıradan, {format_hms(last_seconds)} konumundan devam edilecek.")
 
         last_url = target_stream_url
+        last_title = film_title
         write_title_file(film_title)
 
         print("=" * 60)
@@ -475,7 +491,7 @@ def start_m3u_stream():
                         last_progress_time = now
 
                     if now - last_save_time > 30:
-                        update_local_state(current_index, current_stream_seconds, target_stream_url)
+                        update_local_state(current_index, current_stream_seconds, target_stream_url, film_title)
                         last_save_time = now
 
                     if now - last_dashboard_time > 30:
@@ -521,7 +537,8 @@ def start_m3u_stream():
             current_index += 1
             last_seconds = 0
             last_url = ""
-            update_local_state(current_index, 0, "")
+            last_title = ""
+            update_local_state(current_index, 0, "", "")
             consecutive_fast_failures = 0
             freeze_streak = 0
             continue  # RTMP açık kalsın: beklemeden sıradaki filme geç
@@ -541,7 +558,7 @@ def start_m3u_stream():
             
             last_seconds = current_stream_seconds
             last_url = target_stream_url
-            update_local_state(current_index, last_seconds, last_url)
+            update_local_state(current_index, last_seconds, last_url, film_title)
 
             # Üst üste donma: sorun RTMP tarafında olabilir, publisher'ı da yenile
             if froze:
