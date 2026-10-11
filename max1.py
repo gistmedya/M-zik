@@ -229,10 +229,10 @@ def start_m3u_stream():
             f"Origin: https://vidmody.com\r\n"
         )
 
-        # -re parametresi gerçek zamanlı akış hızı için en başa eklendi
+        # -readrate 1: -re yerine, gerçek zamanlı okuma hızı (FFmpeg 5.0+ gerekir)
         # NOT: '-reconnect_at_eof' kaldırıldı (film sonunda sonsuz yeniden bağlanma/donma yapabiliyordu)
         input_options = [
-            '-re',
+            '-readrate', '1',
             '-fflags', '+genpts+discardcorrupt',
             '-headers', headers_arg,
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
