@@ -12,13 +12,13 @@ from collections import deque
 
 # ===================== AYARLAR =====================
 RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101"
-STREAM_KEY = os.getenv("STREAM_KEY") or "megatv_@"
+STREAM_KEY = os.getenv("STREAM_KEY") or "maxtv"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
-M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/deneme.m3u"
+M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/yerli.m3u"
 LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/file_000000007be48210a068edefa7260629.png"
 
-STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "mega.json")
+STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "fixtv.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
 
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -117,15 +117,10 @@ def download_subtitle(sub_url):
         headers = {'User-Agent': STREAM_USER_AGENT}
         resp = requests.get(sub_url, headers=headers, timeout=15)
         if resp.status_code == 200 and len(resp.content) > 0:
-            # VTT veya SRT içeriğini profesyonel işleme (UTF-8 garantisi)
             content_str = resp.content.decode('utf-8', errors='ignore')
-            
-            # Eğer dosya WebVTT formatındaysa, FFmpeg'in bazı sürümleri SRT formatını daha stabil okur. 
-            # Ancak standart libass tabanlı subtitles filtresi VTT'yi de destekler.
             with open(sub_filename, 'w', encoding='utf-8') as f:
                 f.write(content_str)
-                
-            print(f"✅ Profesyonel altyazı yüklendi ve kodlandı: {sub_url}")
+            print(f"✅ Altyazı yüklendi ve kodlandı: {sub_url}")
             return sub_filename
     except Exception as e:
         print(f"⚠️ Altyazı indirme/işleme hatası: {e}")
@@ -198,7 +193,6 @@ def start_m3u_stream():
         film_title = current_item["title"]
         sub_url = current_item.get("sub_url")
 
-        # Altyazıyı profesyonel olarak hazırla
         active_sub_file = download_subtitle(sub_url)
 
         if last_seconds > 0 and last_url and target_stream_url != last_url:
@@ -209,7 +203,7 @@ def start_m3u_stream():
         write_title_file(film_title)
 
         print("=" * 60)
-        print("📺 Maxanimasyon Profesyonel Canlı Yayın (1080p 25fps - 2500k) Başlatılıyor")
+        print("📺 Maxanimasyon Profesyonel Kesintisiz Yayın Motoru Başlatılıyor")
         print(f"🎬 Oynatılan İçerik  : {film_title}")
         print(f"⏱️ Başlangıç Saniyesi: {last_seconds}")
         print(f"🚀 Hedef RTMP       : {RTMP_SERVER}")
@@ -220,17 +214,20 @@ def start_m3u_stream():
             f"Origin: https://vidmody.com\r\n"
         )
 
+        # -re parametresi gerçek zamanlı akış hızı için en başa eklendi
         input_options = [
+            '-re',
+            '-fflags', '+genpts+discardcorrupt',
             '-headers', headers_arg,
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-err_detect', 'ignore_err',
-            '-analyzeduration', '2000000',
-            '-probesize', '2000000',
+            '-analyzeduration', '3000000',
+            '-probesize', '3000000',
             '-reconnect', '1',
             '-reconnect_at_eof', '1',
             '-reconnect_streamed', '1',
-            '-reconnect_delay_max', '2',
-            '-rw_timeout', '10000000'
+            '-reconnect_delay_max', '5',
+            '-rw_timeout', '15000000'
         ]
 
         if ";" in target_stream_url:
@@ -255,43 +252,35 @@ def start_m3u_stream():
 
         has_logo1 = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
 
-        # Film başlığı drawtext ayarı
         title_drawtext = (
             f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
             f"fontcolor=white@{TEXT_OPACITY}:fontsize=30:"
             f"x=80:y=main_h-th-67"
         )
 
-        # ==================== PROFESYONEL FİLTRE ZİNCİRİ (FILTER_COMPLEX) ====================
-        # 1. Adım: Video standardizasyonu (1920x1080 ölçekleme, pad ve sabit 25 fps)
         filter_steps = [
             '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
             'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main]'
         ]
         current_v_label = 'main'
 
-        # 2. Adım: Profesyonel Altyazı Entegrasyonu (libass motoru)
-        # Sütun (:) ve ters bölü (\) karakterlerinin FFmpeg filter_complex syntax hatasına yol açmaması için yollar güvenli tutulur.
         if active_sub_file and os.path.exists(active_sub_file):
-            # force_style ile profesyonel sinema altyazısı görünümü (Beyaz yazı, siyah arka plan/çerçeve, okunabilir boyut)
             sub_style = (
                 "FontName=DejaVuSans-Bold,"
-                "FontSize=22,"
-                "PrimaryColour=&H00FFFFFF,"      # Beyaz renk (HEX: FFFFFF)
-                "OutlineColour=&H00000000,"      # Siyah kenar çizgisi
-                "BackColour=&H80000000,"         # Hafif yarı saydam gölge arka planı
-                "BorderStyle=1,"                 # Çerçeve stili
-                "Outline=1,"                     # Kenar kalınlığı
-                "Shadow=1,"                      # Gölge
-                "Alignment=2"                    # Alt orta hizalama
+                "FontSize=16,"
+                "PrimaryColour=&H00FFFFFF,"
+                "OutlineColour=&H00000000,"
+                "BackColour=&H80000000,"
+                "BorderStyle=1,"
+                "Outline=1,"
+                "Shadow=1,"
+                "Alignment=2"
             )
-            # FFmpeg subtitles filtresi Windows/Linux dosya yollarında özel karakter sorununu önlemek için escape edilir
             safe_sub_path = active_sub_file.replace(":", "\\:")
             sub_filter = f"[{current_v_label}]subtitles='{safe_sub_path}':force_style='{sub_style}'[sub_out]"
             filter_steps.append(sub_filter)
             current_v_label = 'sub_out'
 
-        # 3. Adım: Kanal Logosu Entegrasyonu
         if has_logo1:
             logo_inputs = ['-i', 'logo.png']
             logo_filter = f"[{logo1_input_index}:v]scale=-2:91,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1]"
@@ -303,13 +292,11 @@ def start_m3u_stream():
         else:
             logo_inputs = []
 
-        # 4. Adım: Canlı Başlık Metni (title.txt)
         final_text_filter = f"[{current_v_label}]{title_drawtext}[v]"
         filter_steps.append(final_text_filter)
 
         filter_str = ";".join(filter_steps)
 
-        # Profesyonel Encode Parametreleri (Canlı Yayın / H.264 / AAC / Sabit Bitrate)
         command = [
             'ffmpeg',
             '-hide_banner',
@@ -320,13 +307,13 @@ def start_m3u_stream():
         ] + audio_map + [
             '-c:v', 'libx264',
             '-preset', 'veryfast',
-            '-tune', 'zerolatency',         # Düşük gecikmeli profesyonel canlı yayın optimizasyonu
+            '-tune', 'zerolatency',
             '-pix_fmt', 'yuv420p',
             '-r', '25',
             '-b:v', '2500k',
             '-maxrate', '2500k',
             '-bufsize', '3000k',
-            '-g', '50',                      # 2 saniyede bir Keyframe (Anlık kopmalarda hızlı toparlanma için)
+            '-g', '50',
             '-c:a', 'aac',
             '-b:a', '128k',
             '-ac', '2',
@@ -335,21 +322,27 @@ def start_m3u_stream():
             RTMP_SERVER
         ]
 
-        print("▶ Profesyonel FFmpeg motoru başlatıldı, yayın işleniyor...")
+        print("▶ FFmpeg ve Watchdog Güvenlik Katmanı Başlatıldı...")
 
         process = subprocess.Popen(
             command,
             stderr=subprocess.PIPE,
-            universal_newlines=True
+            stdout=subprocess.DEVNULL,
+            universal_newlines=True,
+            bufsize=1
         )
 
         last_save_time = time.time()
         last_dashboard_time = time.time()
+        last_progress_time = time.time()
         current_stream_seconds = last_seconds
         stderr_tail = deque(maxlen=40)
+        
+        FREEZE_TIMEOUT_SECONDS = 50 
 
         while True:
             line = process.stderr.readline()
+            
             if not line and process.poll() is not None:
                 break
 
@@ -362,7 +355,8 @@ def start_m3u_stream():
                     hrs, mins, secs = time_match.groups()
                     played_seconds = int(hrs) * 3600 + int(mins) * 60 + float(secs)
                     current_stream_seconds = last_seconds + played_seconds
-
+                    
+                    last_progress_time = time.time()
                     now = time.time()
 
                     if now - last_save_time > 30:
@@ -374,6 +368,15 @@ def start_m3u_stream():
                         write_step_summary(film_title, current_index, len(playlist), current_stream_seconds)
                         last_dashboard_time = now
 
+            if time.time() - last_progress_time > FREEZE_TIMEOUT_SECONDS:
+                print(f"⚠️ UYARI: FFmpeg {FREEZE_TIMEOUT_SECONDS} saniyedir veri akışı sağlayamadı (Donma tespit edildi!). Süreç sonlandırılıyor...")
+                try:
+                    process.terminate()
+                    process.wait(timeout=3)
+                except Exception:
+                    process.kill()
+                break
+
         if process.returncode == 0:
             print("✅ İçerik bitti, sıradakine geçiliyor.")
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="✅ Bitti, sıradakine geçiliyor")
@@ -383,18 +386,19 @@ def start_m3u_stream():
             update_local_state(current_index, 0, "")
             consecutive_fast_failures = 0
         else:
-            print(f"⚠️ Yayın koptu (Return Code: {process.returncode}). Aynı saniyeden tekrar denenecek.")
+            print(f"⚠️ Yayın koptu veya donma nedeniyle yeniden başlatılıyor (Return Code: {process.returncode}).")
             if stderr_tail:
                 print("🧾 FFmpeg son log satırları:")
                 for tail_line in stderr_tail:
                     print(f"   {tail_line}")
-            write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="🔴 Bağlantı koptu, tekrar denenecek")
+            write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="🔴 Yayın dondu/koptu, kaldığı yerden tekrar denenecek")
             
             duration_this_attempt = current_stream_seconds - last_seconds
             if duration_this_attempt < FAST_FAIL_THRESHOLD_SECONDS:
                 consecutive_fast_failures += 1
             else:
                 consecutive_fast_failures = 0
+            
             last_seconds = current_stream_seconds
             last_url = target_stream_url
             update_local_state(current_index, last_seconds, last_url)
@@ -404,7 +408,7 @@ def start_m3u_stream():
         else:
             retry_delay = 5
 
-        print(f"⚠️ {retry_delay} saniye sonra tekrar bağlanılıyor...")
+        print(f"⚠️ {retry_delay} saniye sonra aynı yerden tekrar bağlanılıyor...")
         time.sleep(retry_delay)
 
 if __name__ == "__main__":
