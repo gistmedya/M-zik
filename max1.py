@@ -9,6 +9,7 @@ import re
 import json
 import threading
 import queue
+import atexit
 import requests
 from collections import deque
 
@@ -178,6 +179,69 @@ def _stderr_reader(pipe, q):
     finally:
         q.put(None)  # bitiş işareti
 
+def _publisher_reader(pipe, state):
+    """Publisher FFmpeg'in stderr'ini okur; son satırları ve son ilerleme zamanını tutar."""
+    try:
+        for ln in iter(pipe.readline, ''):
+            ln = ln.rstrip()
+            state['tail'].append(ln)
+            if 'time=' in ln:
+                state['last_progress'] = time.time()
+    except Exception:
+        pass
+
+def stop_publisher(p):
+    if p is None:
+        return
+    try:
+        if p.stdin:
+            p.stdin.close()
+    except Exception:
+        pass
+    try:
+        p.terminate()
+        p.wait(timeout=3)
+    except Exception:
+        try:
+            p.kill()
+        except Exception:
+            pass
+
+def start_publisher():
+    """
+    Kalıcı RTMP bağlantısı: tek bir FFmpeg süreci stdin'den MPEG-TS okur ve RTMP'ye kopyalar (-c copy).
+    Filmler arası geçişte sadece 'film FFmpeg'i' değişir, bu süreç ve RTMP bağlantısı açık kalır.
+    """
+    cmd = [
+        'ffmpeg',
+        '-hide_banner',
+        '-loglevel', 'info',
+        '-fflags', '+genpts',
+        '-analyzeduration', '3000000',
+        '-probesize', '3000000',
+        # Film değişince zaman damgaları başa sarar; 1 sn'den büyük sıçramalar otomatik düzeltilir
+        '-dts_delta_threshold', '1',
+        '-f', 'mpegts',
+        '-i', 'pipe:0',
+        '-c', 'copy',
+        '-flvflags', 'no_duration_filesize',
+        '-f', 'flv',
+        RTMP_SERVER
+    ]
+    p = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        universal_newlines=True,
+        bufsize=1
+    )
+    state = {'tail': deque(maxlen=40), 'last_progress': time.time()}
+    threading.Thread(target=_publisher_reader, args=(p.stderr, state), daemon=True).start()
+    atexit.register(stop_publisher, p)
+    print("🔌 Kalıcı RTMP publisher başlatıldı (filmler arası kapanmaz).")
+    return p, state
+
 def start_m3u_stream():
     print(f"🔧 Kullanılan M3U   : {M3U_URL}")
     print(f"🔧 Kullanılan Logo  : {LOGO_URL}")
@@ -187,6 +251,11 @@ def start_m3u_stream():
     download_logo()
 
     current_index, last_seconds, last_url = get_local_state()
+
+    publisher = None
+    pub_state = None
+    force_restart_publisher = False
+    freeze_streak = 0
 
     consecutive_fast_failures = 0
     FAST_FAIL_THRESHOLD_SECONDS = 20
@@ -337,17 +406,28 @@ def start_m3u_stream():
             '-ar', '44100',
             '-af', 'aresample=async=1:first_pts=0',
             '-max_muxing_queue_size', '1024',
-            '-flvflags', 'no_duration_filesize',
-            '-f', 'flv',
-            RTMP_SERVER
+            '-flush_packets', '1',
+            '-mpegts_flags', '+initial_discontinuity',
+            '-f', 'mpegts',
+            'pipe:1'
         ]
+
+        # --- Kalıcı RTMP publisher: yoksa/ölmüşse başlat, yaşıyorsa DOKUNMA ---
+        if publisher is None or publisher.poll() is not None or force_restart_publisher:
+            stop_publisher(publisher)
+            publisher, pub_state = start_publisher()
+            force_restart_publisher = False
+
+        froze = False
+        publisher_died = False
 
         print("▶ FFmpeg ve Watchdog Güvenlik Katmanı Başlatıldı...")
 
+        # Film FFmpeg'i çıktısını doğrudan publisher'ın stdin'ine yazar
         process = subprocess.Popen(
             command,
             stderr=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
+            stdout=publisher.stdin,
             universal_newlines=True,
             bufsize=1
         )
@@ -406,7 +486,21 @@ def start_m3u_stream():
                         write_step_summary(film_title, current_index, len(playlist), current_stream_seconds)
                         last_dashboard_time = now
 
+            if publisher.poll() is not None:
+                publisher_died = True
+                print("⚠️ UYARI: RTMP publisher süreci kapandı. Konum kaydedilip yeniden bağlanılacak...")
+                print("🧾 Publisher son log satırları:")
+                for t in list(pub_state['tail'])[-15:]:
+                    print(f"   {t}")
+                try:
+                    process.terminate()
+                    process.wait(timeout=3)
+                except Exception:
+                    process.kill()
+                break
+
             if time.time() - last_progress_time > FREEZE_TIMEOUT_SECONDS:
+                froze = True
                 print(f"⚠️ UYARI: FFmpeg {FREEZE_TIMEOUT_SECONDS} saniyedir veri akışı sağlayamadı (Donma tespit edildi!). Süreç sonlandırılıyor...")
                 try:
                     process.terminate()
@@ -421,7 +515,7 @@ def start_m3u_stream():
             process.kill()
             process.wait()
 
-        if process.returncode == 0:
+        if process.returncode == 0 and not publisher_died:
             print("✅ İçerik bitti, sıradakine geçiliyor.")
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="✅ Bitti, sıradakine geçiliyor")
             current_index += 1
@@ -429,6 +523,8 @@ def start_m3u_stream():
             last_url = ""
             update_local_state(current_index, 0, "")
             consecutive_fast_failures = 0
+            freeze_streak = 0
+            continue  # RTMP açık kalsın: beklemeden sıradaki filme geç
         else:
             print(f"⚠️ Yayın koptu veya donma nedeniyle yeniden başlatılıyor (Return Code: {process.returncode}).")
             if stderr_tail:
@@ -446,6 +542,16 @@ def start_m3u_stream():
             last_seconds = current_stream_seconds
             last_url = target_stream_url
             update_local_state(current_index, last_seconds, last_url)
+
+            # Üst üste donma: sorun RTMP tarafında olabilir, publisher'ı da yenile
+            if froze:
+                freeze_streak += 1
+            elif duration_this_attempt >= 60:
+                freeze_streak = 0
+            if freeze_streak >= 2:
+                print("🔁 Üst üste donma tespit edildi: RTMP publisher bağlantısı da yenilenecek.")
+                force_restart_publisher = True
+                freeze_streak = 0
 
         if consecutive_fast_failures > 0:
             retry_delay = min(5 * (2 ** consecutive_fast_failures), MAX_RETRY_DELAY_SECONDS)
