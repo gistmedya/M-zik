@@ -473,7 +473,6 @@ def download_subtitle(sub_url, target_path=None):
         if content[:2] == b'\x1f\x8b' or sub_url.lower().endswith('.gz'):
             try:
                 content = gzip.decompress(content)
-                # gz içindeki gerçek formatı tespit etmeye çalış
                 text_preview = content[:200].decode('utf-8', 'ignore')
                 if '[Script Info]' in text_preview:
                     ext = '.ass'
@@ -661,8 +660,7 @@ def make_input_options(url):
 
 
 def _escape_ffmpeg_path(path):
-    """FFmpeg filter içinde güvenli yol. Windows/Linux uyumlu."""
-    # Linux'ta ':' ve '\' kaçış gerekir
+    """FFmpeg filter içinde güvenli yol."""
     return path.replace('\\', '\\\\').replace(':', '\\:').replace("'", r"\'")
 
 
@@ -707,20 +705,30 @@ def build_reader_command(target_url, seek_seconds, video_only=False, subtitle_fi
         f"fontcolor=white@{TEXT_OPACITY}:fontsize=25:x=51:y=h-th-51"
     )
 
-    # 🔥 ALTYAZI FİLTRESİ
-    subtitle_filter = ""
-    if SUBTITLE_ENABLED and subtitle_file and os.path.exists(subtitle_file):
+    # 🔥 ALTYAZI VAR MI?
+    has_subtitle = bool(
+        SUBTITLE_ENABLED
+        and subtitle_file
+        and os.path.exists(subtitle_file)
+    )
+
+    # 🔥 base_scale'i duruma göre kur (çift virgül hatasını önler)
+    if has_subtitle:
         safe_path = _escape_ffmpeg_path(subtitle_file)
         style = build_subtitle_style()
-        subtitle_filter = f"subtitles='{safe_path}':force_style='{style}',"
         print(f"💬 Altyazı videoya yakılacak: {subtitle_file}")
-
-    base_scale = (
-        '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-        'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25,'
-        f'{subtitle_filter}'
-        '[main];'
-    )
+        base_scale = (
+            '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
+            'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25,'
+            f"subtitles='{safe_path}':force_style='{style}'"
+            '[main];'
+        )
+    else:
+        base_scale = (
+            '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
+            'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25'
+            '[main];'
+        )
 
     has_logo = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
     if has_logo:
