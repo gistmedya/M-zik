@@ -7,6 +7,8 @@ import time
 import os
 import re
 import json
+import threading
+import queue
 import requests
 from collections import deque
 
@@ -28,6 +30,9 @@ STREAM_REFERER = "https://vidmody.com/"
 LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "0.4"))
 TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "0.5"))
 BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+
+# Encode hızı (CPU yetmiyorsa superfast/ultrafast kullan)
+X264_PRESET = os.getenv("X264_PRESET", "superfast")
 
 def format_hms(total_seconds):
     """Saniyeyi SS:DD:SS formatına çevirir."""
@@ -163,6 +168,16 @@ def write_step_summary(title, index, playlist_len, seconds, status="🟢 Yayınd
     except Exception as e:
         print(f"⚠️ Step summary yazma hatası: {e}")
 
+def _stderr_reader(pipe, q):
+    """FFmpeg stderr'ini ayrı thread'de okur; ana döngü hiçbir zaman readline'da kilitlenmez."""
+    try:
+        for ln in iter(pipe.readline, ''):
+            q.put(ln)
+    except Exception:
+        pass
+    finally:
+        q.put(None)  # bitiş işareti
+
 def start_m3u_stream():
     print(f"🔧 Kullanılan M3U   : {M3U_URL}")
     print(f"🔧 Kullanılan Logo  : {LOGO_URL}")
@@ -215,6 +230,7 @@ def start_m3u_stream():
         )
 
         # -re parametresi gerçek zamanlı akış hızı için en başa eklendi
+        # NOT: '-reconnect_at_eof' kaldırıldı (film sonunda sonsuz yeniden bağlanma/donma yapabiliyordu)
         input_options = [
             '-re',
             '-fflags', '+genpts+discardcorrupt',
@@ -223,8 +239,8 @@ def start_m3u_stream():
             '-err_detect', 'ignore_err',
             '-analyzeduration', '3000000',
             '-probesize', '3000000',
+            '-thread_queue_size', '512',
             '-reconnect', '1',
-            '-reconnect_at_eof', '1',
             '-reconnect_streamed', '1',
             '-reconnect_delay_max', '5',
             '-rw_timeout', '15000000'
@@ -252,8 +268,9 @@ def start_m3u_stream():
 
         has_logo1 = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
 
+        # reload=1 kaldırıldı: başlık yayın boyunca değişmiyor, her karede diskten okumak gereksiz yük
         title_drawtext = (
-            f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
+            f"drawtext=textfile='title.txt':fontfile='{BOLD_FONT_PATH}':"
             f"fontcolor=white@{TEXT_OPACITY}:fontsize=30:"
             f"x=80:y=main_h-th-67"
         )
@@ -306,7 +323,7 @@ def start_m3u_stream():
             '-map', '[v]'
         ] + audio_map + [
             '-c:v', 'libx264',
-            '-preset', 'veryfast',
+            '-preset', X264_PRESET,
             '-tune', 'zerolatency',
             '-pix_fmt', 'yuv420p',
             '-r', '25',
@@ -318,6 +335,9 @@ def start_m3u_stream():
             '-b:a', '128k',
             '-ac', '2',
             '-ar', '44100',
+            '-af', 'aresample=async=1:first_pts=0',
+            '-max_muxing_queue_size', '1024',
+            '-flvflags', 'no_duration_filesize',
             '-f', 'flv',
             RTMP_SERVER
         ]
@@ -332,32 +352,47 @@ def start_m3u_stream():
             bufsize=1
         )
 
+        # stderr ayrı thread'de okunuyor -> watchdog artık kilitlenmiyor
+        line_queue = queue.Queue()
+        threading.Thread(target=_stderr_reader, args=(process.stderr, line_queue), daemon=True).start()
+
         last_save_time = time.time()
         last_dashboard_time = time.time()
         last_progress_time = time.time()
         current_stream_seconds = last_seconds
+        last_played_seconds = -1.0
+        last_speed = None
         stderr_tail = deque(maxlen=40)
         
         FREEZE_TIMEOUT_SECONDS = 50 
 
         while True:
-            line = process.stderr.readline()
-            
-            if not line and process.poll() is not None:
-                break
-
-            if line:
+            try:
+                line = line_queue.get(timeout=1)
+            except queue.Empty:
+                line = ""
+            else:
+                if line is None:
+                    break  # FFmpeg kapandı
                 stderr_tail.append(line.rstrip())
 
-            if "time=" in line:
+            if line and "time=" in line:
                 time_match = re.search(r'time=(\d+):(\d+):(\d+\.\d+)', line)
                 if time_match:
                     hrs, mins, secs = time_match.groups()
                     played_seconds = int(hrs) * 3600 + int(mins) * 60 + float(secs)
                     current_stream_seconds = last_seconds + played_seconds
-                    
-                    last_progress_time = time.time()
+
+                    speed_match = re.search(r'speed=\s*([\d.]+)x', line)
+                    if speed_match:
+                        last_speed = float(speed_match.group(1))
+
                     now = time.time()
+
+                    # Sadece süre gerçekten ilerlediyse "ilerleme var" say
+                    if played_seconds > last_played_seconds:
+                        last_played_seconds = played_seconds
+                        last_progress_time = now
 
                     if now - last_save_time > 30:
                         update_local_state(current_index, current_stream_seconds, target_stream_url)
@@ -365,6 +400,9 @@ def start_m3u_stream():
 
                     if now - last_dashboard_time > 30:
                         print_dashboard(film_title, current_index, len(playlist), current_stream_seconds)
+                        if last_speed is not None:
+                            warn = "  ⚠️ CPU yetmiyor olabilir (1.0x altı)" if last_speed < 0.97 else ""
+                            print(f"⚡ Encode hızı: {last_speed:.2f}x{warn}")
                         write_step_summary(film_title, current_index, len(playlist), current_stream_seconds)
                         last_dashboard_time = now
 
@@ -376,6 +414,12 @@ def start_m3u_stream():
                 except Exception:
                     process.kill()
                 break
+
+        try:
+            process.wait(timeout=10)
+        except Exception:
+            process.kill()
+            process.wait()
 
         if process.returncode == 0:
             print("✅ İçerik bitti, sıradakine geçiliyor.")
