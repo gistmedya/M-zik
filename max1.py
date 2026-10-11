@@ -21,7 +21,7 @@ RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/deneme.m3u"
 LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/file_000000007be48210a068edefa7260629.png"
 
-STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "mega.json")
+STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "m.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
 
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
