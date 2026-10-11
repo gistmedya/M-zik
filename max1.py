@@ -9,14 +9,7 @@ MİMARİ (RTMP kalıcı):
 - Okuyucu: filmi açar, logo/yazı/altyazı ekler, x264+AAC ile kodlar, MPEG-TS olarak stdout'a yazar.
 - Çıkış: stdin'den MPEG-TS okur, yeniden kodlamadan (-c copy) RTMP'ye gönderir.
 - Film bitince sadece okuyucu kapanır; çıkış süreci ve RTMP bağlantısı açık kalır.
-
-RTMP DAYANIKLILIĞI (YENİ):
-- Çıkış FFmpeg ölürse (sunucu bağlantıyı kapattı vb.) kendi kendine artan bekleme süresiyle
-  yeniden başlatılır. Okuyucu ve film konumu KESİLMEZ.
-- Okuyucudan veri gelmediği anlarda (film geçişi, kaynak açılışı, kaynak donması) siyah + logo
-  "dolgu" yayını basılır. Böylece RTMP sunucusu "boşta yayıncı" diyerek bağlantıyı koparmaz.
-- Dolgu ve okuyucu çıktıları 188 baytlık TS paket sınırlarında birleştirilir (bozuk paket olmaz).
-- RTMP uzun süre (RTMP_MAX_DROP_SECONDS) geri gelmezse okuyucu durdurulur, film aynı saniyeden devam eder.
+- Sadece RTMP/çıkış süreci gerçekten ölürse yeniden başlatılır.
 
 ALTYAZI:
   M3U'da #EXTVLCOPT:sub-url=... satırı ile belirtilir. SRT / VTT / ASS / SSA desteklenir.
@@ -65,44 +58,21 @@ BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/D
 
 DECODER_THREADS = os.getenv("DECODER_THREADS", "1")
 
-# İlerleme (time=) bu kadar sn gelmezse süreç donmuş sayılır.
 WATCHDOG_TIMEOUT_SECONDS = int(os.getenv("WATCHDOG_TIMEOUT_SECONDS", "45"))
-# İlk kare gelene kadar tanınan süre (HLS kaynaklar geç açılabilir).
 WATCHDOG_STARTUP_SECONDS = int(os.getenv("WATCHDOG_STARTUP_SECONDS", "120"))
 
-# Link değişip aynı film olduğunda geriden devam edilecek süre.
 LINK_CHANGE_REWIND_SECONDS = int(os.getenv("LINK_CHANGE_REWIND_SECONDS", "15"))
-
-# Filmin bittiği sayılması için toplam süreden en fazla bu kadar sn eksik kalınabilir.
 END_TOLERANCE_SECONDS = int(os.getenv("END_TOLERANCE_SECONDS", "90"))
 
-# Art arda erken/hatalı bitişlerde seek konumu bu kadar geri alınır (seek sorunlarına karşı).
 SEEK_BACKOFF_SECONDS = int(os.getenv("SEEK_BACKOFF_SECONDS", "30"))
 SEEK_BACKOFF_AFTER_FAILURES = int(os.getenv("SEEK_BACKOFF_AFTER_FAILURES", "2"))
 
-# Bu kadar art arda hızlı hatadan sonra sıradaki içeriğe geçilir.
 MAX_CONSECUTIVE_FAILURES = int(os.getenv("MAX_CONSECUTIVE_FAILURES", "4"))
 FAST_FAIL_THRESHOLD_SECONDS = 20
 MAX_RETRY_DELAY_SECONDS = 120
 
-# ÇİFT URL ("video;ses") AYARLARI
 DUAL_FALLBACK_AFTER_FAILURES = int(os.getenv("DUAL_FALLBACK_AFTER_FAILURES", "3"))
 DUAL_AUDIO_SYNC = os.getenv("DUAL_AUDIO_SYNC", "1") == "1"
-
-# ===================== RTMP DAYANIKLILIK AYARLARI =====================
-TS_PACKET_SIZE = 188
-# Çıkış FFmpeg'in girişi analiz süresi (mikrosaniye). Eskiden 30 sn idi; bu yüzden hem yayın geç
-# açılıyor hem de bağlanınca yığılmış veri sunucuya patlıyordu.
-RTMP_PROBE_MICROSECONDS = int(os.getenv("RTMP_PROBE_MICROSECONDS", "3000000"))
-# Çıkış süreci ölürse yeniden başlatma bekleme süresi 2, 4, 8... sn artar, en fazla bu kadar olur.
-RTMP_RECONNECT_MAX_DELAY = int(os.getenv("RTMP_RECONNECT_MAX_DELAY", "10"))
-# Çıkış süreci bu kadar sn yaşarsa "kararlı" sayılır, bekleme sayacı sıfırlanır.
-RTMP_STABLE_SECONDS = int(os.getenv("RTMP_STABLE_SECONDS", "10"))
-# RTMP bu kadar sn geri gelmezse okuyucu durdurulur, film aynı saniyeden tekrar başlatılır.
-RTMP_MAX_DROP_SECONDS = int(os.getenv("RTMP_MAX_DROP_SECONDS", "20"))
-# Dolgu (siyah + logo) yayını: veri bu kadar sn gelmezse devreye girer.
-FILLER_ENABLED = os.getenv("FILLER_ENABLED", "1") == "1"
-FILLER_AFTER_IDLE_SECONDS = float(os.getenv("FILLER_AFTER_IDLE_SECONDS", "3"))
 
 # ===================== ALTYAZI AYARLARI =====================
 SUBTITLE_ENABLED = os.getenv("SUBTITLE_ENABLED", "1") == "1"
@@ -119,58 +89,34 @@ SUBTITLE_BORDER_STYLE = os.getenv("SUBTITLE_BORDER_STYLE", "1")
 
 # ===================== KALICI RTMP ÇIKIŞ SÜRECİ =====================
 class RtmpOutput:
-    """Tek FFmpeg süreci: stdin'den MPEG-TS alır, RTMP'ye kopyalar. Filmler arası KAPANMAZ.
-
-    - Süreç ölürse yazma sırasında otomatik (artan beklemeyle) yeniden başlatılır; okuyucu kesilmez.
-    - Veri akışı durursa (film geçişi vb.) siyah+logo dolgu yayını basılır; sunucu bağlantıyı koparmaz.
-    """
+    """Tek FFmpeg süreci: stdin'den MPEG-TS alır, RTMP'ye kopyalar. Filmler arası KAPANMAZ."""
 
     def __init__(self, rtmp_url):
         self.rtmp_url = rtmp_url
         self.proc = None
         self.failed = threading.Event()
         self.stderr_tail = deque(maxlen=30)
-        self.lock = threading.RLock()
-        self.closed = False
-        self.gave_up = False
-        self.started_at = 0.0
-        self.down_since = None
-        self.next_restart_at = 0.0
-        self.fast_fail_count = 0
-        self.last_write = time.time()
 
-        self.filler_lock = threading.Lock()
-        self.filler_proc = None
-        self.filler_thread = None
-        self.filler_stop = None
-
-        if FILLER_ENABLED:
-            threading.Thread(target=self._keepalive_loop, daemon=True).start()
-
-    # ---------- süreç yönetimi ----------
     def start(self):
-        with self.lock:
-            self._kill_proc()
-            self.failed.clear()
-            self.stderr_tail.clear()
-            cmd = [
-                'ffmpeg', '-hide_banner', '-loglevel', 'warning', '-nostats',
-                '-fflags', '+genpts',
-                '-analyzeduration', str(RTMP_PROBE_MICROSECONDS),
-                '-probesize', str(RTMP_PROBE_MICROSECONDS),
-                '-f', 'mpegts', '-i', 'pipe:0',
-                '-map', '0:v:0', '-map', '0:a:0?',
-                '-c', 'copy',
-                '-bsf:v', 'h264_mp4toannexb',
-                '-flvflags', 'no_duration_filesize',
-                '-f', 'flv', self.rtmp_url,
-            ]
-            self.proc = subprocess.Popen(
-                cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
-            )
-            self.started_at = time.time()
-            threading.Thread(target=self._drain_stderr, args=(self.proc,), daemon=True).start()
-            print(f"🔌 Kalıcı RTMP çıkış süreci başlatıldı => {self.rtmp_url}")
+        self.stop(force=True)
+        self.failed.clear()
+        self.stderr_tail.clear()
+        cmd = [
+            'ffmpeg', '-hide_banner', '-loglevel', 'warning', '-nostats',
+            '-fflags', '+genpts+nobuffer',
+            '-analyzeduration', '3000000',
+            '-probesize', '3000000',
+            '-f', 'mpegts', '-i', 'pipe:0',
+            '-map', '0:v:0', '-map', '0:a:0?',
+            '-c', 'copy',
+            '-flvflags', 'no_duration_filesize',
+            '-f', 'flv', self.rtmp_url,
+        ]
+        self.proc = subprocess.Popen(
+            cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
+        )
+        threading.Thread(target=self._drain_stderr, args=(self.proc,), daemon=True).start()
+        print(f"🔌 Kalıcı RTMP çıkış süreci başlatıldı => {self.rtmp_url}")
 
     def _drain_stderr(self, proc):
         try:
@@ -180,23 +126,27 @@ class RtmpOutput:
             pass
 
     def alive(self):
-        p = self.proc
-        return p is not None and p.poll() is None
+        return self.proc is not None and self.proc.poll() is None
 
-    def down_for(self):
-        d = self.down_since
-        return 0.0 if d is None else time.time() - d
+    def write(self, data):
+        try:
+            self.proc.stdin.write(data)
+            self.proc.stdin.flush()
+            return True
+        except (BrokenPipeError, OSError, ValueError, AttributeError):
+            self.failed.set()
+            return False
 
-    def _kill_proc(self, graceful=False):
+    def stop(self, force=False):
         p = self.proc
         if p is None:
             return
         self.proc = None
         try:
-            if graceful:
-                p.stdin.close()
-            else:
+            if force:
                 p.kill()
+            else:
+                p.stdin.close()
         except Exception:
             pass
         try:
@@ -207,146 +157,6 @@ class RtmpOutput:
                 p.wait(timeout=5)
             except Exception:
                 pass
-
-    def _mark_down(self, reason):
-        """Çıkış süreci öldü: nedenini yazdır, bekleme süresini ayarla, süreci temizle."""
-        now = time.time()
-        time.sleep(0.3)  # stderr'in son satırları okunsun
-        self.failed.set()
-        if self.down_since is None:
-            self.down_since = now
-        lived = now - self.started_at
-        if lived < RTMP_STABLE_SECONDS:
-            self.fast_fail_count += 1
-        else:
-            self.fast_fail_count = 1
-        delay = min(2 * (2 ** (self.fast_fail_count - 1)), RTMP_RECONNECT_MAX_DELAY)
-        self.next_restart_at = now + delay
-        print(f"🔴 RTMP koptu ({reason}; {lived:.0f} sn yaşadı). {delay} sn içinde yeniden bağlanılacak, "
-              f"okuyucu kesilmiyor.")
-        if self.stderr_tail:
-            print("🧾 Çıkış FFmpeg son log satırları:")
-            for l in list(self.stderr_tail)[-10:]:
-                print(f"   {l}")
-        self._kill_proc()
-
-    def _try_restart(self):
-        if self.proc is not None:
-            self._mark_down("çıkış FFmpeg süreci sonlandı")
-        if time.time() < self.next_restart_at:
-            return False
-        self.start()
-        return True
-
-    def write(self, data):
-        """True: devam. False: sadece kapatılmışsa. Bağlantı yokken veri atılır (okuyucu gerçek zamanlı akar)."""
-        if self.closed:
-            return False
-        self.last_write = time.time()
-        with self.lock:
-            if not self.alive():
-                if not self._try_restart():
-                    return True
-            try:
-                self.proc.stdin.write(data)
-                self.proc.stdin.flush()
-            except (BrokenPipeError, OSError, ValueError, AttributeError):
-                self._mark_down("yazma hatası")
-                return True
-            if self.down_since is not None and time.time() - self.started_at >= RTMP_STABLE_SECONDS:
-                self.down_since = None
-                self.fast_fail_count = 0
-        return True
-
-    def stop(self, force=False):
-        with self.lock:
-            self._kill_proc(graceful=not force)
-            self.gave_up = False
-            self.down_since = None
-            self.fast_fail_count = 0
-            self.next_restart_at = 0.0
-
-    def close(self):
-        self.closed = True
-        self.stop_filler()
-        self.stop()
-
-    # ---------- dolgu (filler) yayını ----------
-    def _keepalive_loop(self):
-        while not self.closed:
-            time.sleep(1)
-            if self.closed:
-                break
-            if time.time() - self.last_write > FILLER_AFTER_IDLE_SECONDS:
-                self.start_filler()
-
-    def start_filler(self):
-        if not FILLER_ENABLED or self.closed:
-            return
-        with self.filler_lock:
-            if self.filler_proc is not None and self.filler_proc.poll() is None:
-                return
-            try:
-                proc = subprocess.Popen(
-                    build_filler_command(),
-                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
-                )
-            except Exception as e:
-                print(f"⚠️ Dolgu yayını başlatılamadı: {e}")
-                return
-            stop_evt = threading.Event()
-            t = threading.Thread(target=self._filler_pump, args=(proc, stop_evt), daemon=True)
-            self.filler_proc, self.filler_thread, self.filler_stop = proc, t, stop_evt
-            t.start()
-            print("🟦 Veri akışı yok: dolgu (siyah + logo) yayını başlatıldı, RTMP canlı tutuluyor.")
-
-    def filler_active(self):
-        return self.filler_proc is not None
-
-    def stop_filler(self):
-        with self.filler_lock:
-            proc, t, evt = self.filler_proc, self.filler_thread, self.filler_stop
-            self.filler_proc = self.filler_thread = self.filler_stop = None
-        if proc is None:
-            return
-        evt.set()
-        try:
-            proc.kill()
-        except Exception:
-            pass
-        try:
-            proc.wait(timeout=3)
-        except Exception:
-            pass
-        if t is not None and t is not threading.current_thread():
-            t.join(timeout=3)
-        try:
-            proc.stdout.close()
-        except Exception:
-            pass
-        print("⬛ Dolgu yayını durduruldu, asıl içeriğe geçildi.")
-
-    def _filler_pump(self, proc, stop_evt):
-        carry = b''
-        try:
-            fd = proc.stdout.fileno()
-            while not stop_evt.is_set():
-                chunk = os.read(fd, 65536)
-                if not chunk:
-                    break
-                carry += chunk
-                usable = len(carry) - (len(carry) % TS_PACKET_SIZE)
-                if usable == 0:
-                    continue
-                data, carry = carry[:usable], carry[usable:]
-                if stop_evt.is_set():
-                    break
-                if not self.write(data):
-                    break
-        except (OSError, ValueError):
-            pass
-        if not stop_evt.is_set():
-            print("⚠️ Dolgu FFmpeg süreci kendiliğinden sonlandı (ffmpeg lavfi/logo hatası olabilir).")
 
 
 # ===================== YARDIMCI FONKSİYONLAR =====================
@@ -800,8 +610,6 @@ def iter_stderr_lines(stream):
 
 def pump_reader_to_output(reader, output):
     fd = reader.stdout.fileno()
-    first = True
-    carry = b''
     while True:
         try:
             chunk = os.read(fd, 65536)
@@ -809,45 +617,7 @@ def pump_reader_to_output(reader, output):
             break
         if not chunk:
             break
-
-        if first:
-            if len(chunk) < 16384:
-                buffered = chunk
-                deadline = time.time() + 5
-                while len(buffered) < 16384 and time.time() < deadline:
-                    try:
-                        more = os.read(fd, 65536)
-                        if not more:
-                            break
-                        buffered += more
-                    except OSError:
-                        break
-                chunk = buffered
-                print(f"📦 İlk MPEG-TS paketi hazırlandı ({len(chunk)} byte)")
-            first = False
-
-        # Dolgu yayını çalışıyorsa önce onu durdur (iki akış birbirine karışmasın).
-        if output.filler_active():
-            output.stop_filler()
-
-        # Sadece tam 188 baytlık TS paketleri yaz (çıkış yeniden bağlansa bile paket sınırı bozulmaz).
-        carry += chunk
-        usable = len(carry) - (len(carry) % TS_PACKET_SIZE)
-        if usable == 0:
-            continue
-        data, carry = carry[:usable], carry[usable:]
-
-        if not output.write(data):
-            try:
-                reader.kill()
-            except Exception:
-                pass
-            break
-
-        # RTMP çok uzun süredir geri gelmiyorsa okuyucuyu durdur; film aynı saniyeden devam edecek.
-        if output.down_for() > RTMP_MAX_DROP_SECONDS:
-            print(f"🔴 RTMP {RTMP_MAX_DROP_SECONDS} sn'den uzun süredir yok. Okuyucu durduruluyor.")
-            output.gave_up = True
+        if not output.write(chunk):
             try:
                 reader.kill()
             except Exception:
@@ -992,49 +762,13 @@ def build_reader_command(target_url, seek_seconds, video_only=False, subtitle_fi
             '-map', '[v]',
         ] + audio_map + audio_filter + [
             '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
-            '-r', '25', '-b:v', '2500k', '-maxrate', '2500k', '-bufsize', '3000k',
-            '-g', '50', '-keyint_min', '25', '-sc_threshold', '0',
-            '-x264-params', 'repeat-headers=1:force-cfr=1',
-            '-bsf:v', 'h264_mp4toannexb',
+            '-r', '25', '-b:v', '2500k', '-maxrate', '2500k', '-bufsize', '3000k', '-g', '50',
             '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-ar', '44100',
             '-flush_packets', '1', '-muxdelay', '0', '-muxpreload', '0',
             '-mpegts_flags', '+resend_headers',
             '-f', 'mpegts', 'pipe:1',
         ]
     )
-
-
-def build_filler_command():
-    """Film geçişlerinde RTMP'yi canlı tutan siyah + logo dolgu yayını.
-    Kodlama parametreleri okuyucu ile birebir aynıdır (çözünürlük, fps, codec, bitrate)."""
-    has_logo = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
-    cmd = [
-        'ffmpeg', '-hide_banner', '-loglevel', 'error', '-nostats',
-        '-re', '-f', 'lavfi', '-i', 'color=c=black:s=1920x1080:r=25',
-        '-re', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo',
-    ]
-    if has_logo:
-        cmd += ['-i', 'logo.png']
-        filter_str = (
-            f'[2:v]scale=-2:85,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
-            '[0:v][logo1]overlay=W-w-70:48,format=yuv420p[v]'
-        )
-    else:
-        filter_str = '[0:v]format=yuv420p[v]'
-    cmd += [
-        '-filter_complex', filter_str,
-        '-map', '[v]', '-map', '1:a:0',
-        '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
-        '-r', '25', '-b:v', '2500k', '-maxrate', '2500k', '-bufsize', '3000k',
-        '-g', '50', '-keyint_min', '25', '-sc_threshold', '0',
-        '-x264-params', 'repeat-headers=1:force-cfr=1',
-        '-bsf:v', 'h264_mp4toannexb',
-        '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-ar', '44100',
-        '-flush_packets', '1', '-muxdelay', '0', '-muxpreload', '0',
-        '-mpegts_flags', '+resend_headers',
-        '-f', 'mpegts', 'pipe:1',
-    ]
-    return cmd
 
 
 # ===================== OKUYUCUYU ÇALIŞTIR =====================
@@ -1108,9 +842,7 @@ def run_reader(command, output, base_seconds, total_duration_sec, ctx):
     process.wait()
     pump_thread.join(timeout=15)
 
-    # Çıkış süreci artık kendi kendine yeniden bağlanıyor; okuyucu ancak RTMP çok uzun süre
-    # geri gelmezse (gave_up) ya da pompa takılırsa "çıkış koptu" sayılır.
-    output_broken = output.gave_up or pump_thread.is_alive()
+    output_broken = output.failed.is_set() or not output.alive() or pump_thread.is_alive()
     return ReaderResult(process.returncode, current_seconds, stderr_tail, output_broken)
 
 
@@ -1137,7 +869,6 @@ def start_m3u_stream():
     print(f"🔧 RTMP hedefi      : {RTMP_SERVER}")
     print(f"🔧 Decoder thread   : {DECODER_THREADS}")
     print(f"🔧 Altyazı          : {'AÇIK' if SUBTITLE_ENABLED else 'KAPALI'}")
-    print(f"🔧 Dolgu yayını     : {'AÇIK' if FILLER_ENABLED else 'KAPALI'}")
 
     download_logo()
     current_index, last_seconds, last_url, last_title = get_local_state()
@@ -1233,13 +964,9 @@ def start_m3u_stream():
             result = run_reader(command, output, last_seconds, total_duration_sec, ctx)
             played = result.stream_seconds - last_seconds
 
-            # Okuyucu bitti: bir sonraki içerik hazırlanırken RTMP'ye dolgu yayını bas.
-            output.start_filler()
-
-            # ---------- 1) RTMP çıkışı uzun süre geri gelmedi / pompa takıldı ----------
+            # ---------- 1) RTMP çıkışı koptu ----------
             if result.output_broken:
-                print(f"🔴 RTMP çıkışı {RTMP_MAX_DROP_SECONDS} sn'den uzun süre toparlanamadı. "
-                      f"Çıkış süreci sıfırdan başlatılacak, film aynı saniyeden devam edecek.")
+                print("🔴 Kalıcı RTMP çıkışı koptu. Çıkış süreci yeniden başlatılacak, film aynı saniyeden devam edecek.")
                 if output.stderr_tail:
                     print("🧾 Çıkış FFmpeg son log satırları:")
                     for l in output.stderr_tail:
@@ -1312,7 +1039,7 @@ def start_m3u_stream():
     except KeyboardInterrupt:
         print("\n🛑 Durduruluyor...")
     finally:
-        output.close()
+        output.stop()
 
 
 if __name__ == "__main__":
