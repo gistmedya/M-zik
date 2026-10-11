@@ -180,6 +180,27 @@ def _stderr_reader(pipe, q):
     finally:
         q.put(None)  # bitiş işareti
 
+def get_media_duration(url):
+    """ffprobe ile içeriğin toplam süresini (sn) bulur; bulunamazsa None döner."""
+    video_url = url.split(";", 1)[0].strip()
+    headers_arg = (
+        f"User-Agent: {STREAM_USER_AGENT}\r\n"
+        f"Referer: {STREAM_REFERER}\r\n"
+        f"Origin: https://vidmody.com\r\n"
+    )
+    try:
+        out = subprocess.run(
+            ['ffprobe', '-v', 'error', '-headers', headers_arg,
+             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
+             '-show_entries', 'format=duration',
+             '-of', 'default=noprint_wrappers=1:nokey=1', video_url],
+            capture_output=True, text=True, timeout=40
+        )
+        val = float(out.stdout.strip().splitlines()[0])
+        return val if val > 0 else None
+    except Exception:
+        return None
+
 def _publisher_reader(pipe, state):
     """Publisher FFmpeg'in stderr'ini okur; son satırları ve son ilerleme zamanını tutar."""
     try:
@@ -254,6 +275,8 @@ def start_m3u_stream():
     current_index, last_seconds, last_url, last_title = get_local_state()
     print(f"💾 Kayıtlı durum    : sıra={current_index + 1}, süre={format_hms(last_seconds)}, film='{last_title}'")
 
+    duration_cache = {}
+    EARLY_END_TOLERANCE_SECONDS = 45
     publisher = None
     pub_state = None
     force_restart_publisher = False
@@ -300,6 +323,13 @@ def start_m3u_stream():
 
         last_url = target_stream_url
         last_title = film_title
+
+        # Film süresini bul (erken biten yayını "film bitti" sanmamak için)
+        if target_stream_url not in duration_cache:
+            duration_cache[target_stream_url] = get_media_duration(target_stream_url)
+        film_duration = duration_cache[target_stream_url]
+        if film_duration:
+            print(f"🕒 Film süresi      : {format_hms(film_duration)}")
         write_title_file(film_title)
 
         print("=" * 60)
@@ -531,7 +561,18 @@ def start_m3u_stream():
             process.kill()
             process.wait()
 
+        # FFmpeg 0 koduyla çıktı ama film gerçekten bitmedi mi? (kaynak bağlantıyı erken kapatmış olabilir)
+        early_end = False
         if process.returncode == 0 and not publisher_died:
+            if film_duration:
+                early_end = current_stream_seconds < film_duration - EARLY_END_TOLERANCE_SECONDS
+            else:
+                early_end = (current_stream_seconds - last_seconds) < FAST_FAIL_THRESHOLD_SECONDS
+            if early_end:
+                shown_total = format_hms(film_duration) if film_duration else "?"
+                print(f"⚠️ İçerik ERKEN bitti ({format_hms(current_stream_seconds)} / {shown_total}); sıradakine GEÇİLMEYECEK, kaldığı yerden devam edilecek.")
+
+        if process.returncode == 0 and not publisher_died and not early_end:
             print("✅ İçerik bitti, sıradakine geçiliyor.")
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="✅ Bitti, sıradakine geçiliyor")
             current_index += 1
