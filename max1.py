@@ -111,13 +111,13 @@ class RtmpOutput:
         self.stderr_tail.clear()
         cmd = [
             'ffmpeg', '-hide_banner', '-loglevel', 'warning', '-nostats',
-            '-fflags', '+genpts+nobuffer+igndts',
-            '-analyzeduration', '15000000',
-            '-probesize', '15000000',
+            '-fflags', '+genpts+igndts',
+            '-analyzeduration', '20000000',
+            '-probesize', '20000000',
             '-f', 'mpegts', '-i', 'pipe:0',
             '-map', '0:v:0', '-map', '0:a:0?',
             '-c', 'copy',
-            '-bsf:v', 'h264_mp4toannexb',
+            # NOT: -bsf:v h264_mp4toannexb KALDIRILDI (header'ı bozuyordu)
             '-flvflags', 'no_duration_filesize',
             '-f', 'flv', self.rtmp_url,
         ]
@@ -450,9 +450,7 @@ def _clean_subtitle_url(url):
     if not url:
         return ""
     url = url.strip()
-    # Baştaki ':' , boşluk, tırnak, virgül temizle
     url = url.lstrip(': \t\'"')
-    # Sondaki tırnak ve boşlukları temizle
     url = url.rstrip(' \t\'"')
     return url
 
@@ -465,7 +463,6 @@ def download_subtitle(sub_url, target_path=None):
     if not sub_url:
         return None
 
-    # 🔥 URL temizliği (baştaki ':' gibi yazım hatalarını düzeltir)
     sub_url = _clean_subtitle_url(sub_url)
     if not sub_url or not sub_url.startswith(('http://', 'https://')):
         print(f"⚠️ Geçersiz altyazı URL'si: {sub_url}")
@@ -611,8 +608,12 @@ def iter_stderr_lines(stream):
 
 
 def pump_reader_to_output(reader, output):
-    """Okuyucunun stdout'unu (MPEG-TS) kalıcı RTMP çıkışına aktarır."""
+    """
+    Okuyucunun stdout'unu (MPEG-TS) kalıcı RTMP çıkışına aktarır.
+    🔥 İlk chunk'ı biriktirir — SPS/PPS/header tam gelsin.
+    """
     fd = reader.stdout.fileno()
+    first = True
     while True:
         try:
             chunk = os.read(fd, 65536)
@@ -620,6 +621,24 @@ def pump_reader_to_output(reader, output):
             break
         if not chunk:
             break
+
+        # 🔥 İlk chunk'ı biriktir — SPS/PPS tam gelsin
+        if first:
+            if len(chunk) < 16384:
+                buffered = chunk
+                deadline = time.time() + 5
+                while len(buffered) < 16384 and time.time() < deadline:
+                    try:
+                        more = os.read(fd, 65536)
+                        if not more:
+                            break
+                        buffered += more
+                    except OSError:
+                        break
+                chunk = buffered
+                print(f"📦 İlk MPEG-TS paketi hazırlandı ({len(chunk)} byte)")
+            first = False
+
         if not output.write(chunk):
             try:
                 reader.kill()
@@ -771,10 +790,12 @@ def build_reader_command(target_url, seek_seconds, video_only=False, subtitle_fi
             '-map', '[v]',
         ] + audio_map + audio_filter + [
             '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
-            '-r', '25', '-b:v', '2500k', '-maxrate', '2500k', '-bufsize', '3000k', '-g', '50',
+            '-r', '25', '-b:v', '2500k', '-maxrate', '2500k', '-bufsize', '3000k',
+            '-g', '50', '-keyint_min', '25', '-sc_threshold', '0',
+            '-x264-params', 'repeat-headers=1:force-cfr=1',
             '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-ar', '44100',
             '-flush_packets', '1', '-muxdelay', '0', '-muxpreload', '0',
-            '-mpegts_flags', '+resend_headers',
+            '-mpegts_flags', '+resend_headers+initial_discontinuity',
             '-f', 'mpegts', 'pipe:1',
         ]
     )
