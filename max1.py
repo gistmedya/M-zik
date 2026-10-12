@@ -82,8 +82,8 @@ def get_video_duration_ffprobe(video_url):
         'ffprobe',
         '-v', 'error',
         '-allowed_extensions', 'ALL',
-        '-analyzeduration', '10000000',
-        '-probesize', '10000000',
+        '-analyzeduration', '5000000',
+        '-probesize', '5000000',
         '-select_streams', 'v:0',
         '-show_entries', 'format=duration',
         '-of', 'default=noprint_wrappers=1:nokey=1',
@@ -91,12 +91,12 @@ def get_video_duration_ffprobe(video_url):
         video_url
     ]
     try:
-        output = subprocess.check_output(cmd, stderr=subprocess.STDOUT, timeout=8).decode('utf-8').strip()
+        output = subprocess.check_output(cmd, stderr=subprocess.STDOUT, timeout=6).decode('utf-8').strip()
         duration = float(output)
         if duration > 0:
             return duration
     except Exception as e:
-        print(f"⚠️ ffprobe ile süre okunamadı: {e}")
+        print(f"⚠️ ffprobe ile süre okunamadı (Atlanıyor): {e}")
     return 0.0
 
 
@@ -211,7 +211,6 @@ def write_step_summary(title, index, playlist_len, seconds, status="🟢 Yayınd
 
 
 def check_and_get_subtitle():
-    """Çalışma dizininde subtitle.srt veya alt yasal altyazı dosyası var mı arar."""
     for ext in ['srt', 'ass', 'vtt']:
         sub_path = f"subtitle.{ext}"
         if os.path.exists(sub_path) and os.path.getsize(sub_path) > 0:
@@ -255,7 +254,6 @@ def start_m3u_stream():
 
         write_title_file(film_title)
 
-        # En yüksek kalite HLS adresi
         real_stream_url = get_highest_quality_hls_link(target_stream_url)
 
         probe_url = real_stream_url.split(";")[0].strip() if ";" in real_stream_url else real_stream_url
@@ -327,12 +325,10 @@ def start_m3u_stream():
             f"x=20:y=h-th-20"
         )
 
-        # Filtre zinciri oluşturma (Altyazı entegrasyonu ile)
         base_video_filter = '[0:v]scale=1920:1080:flags=bicubic,setdar=16/9,fps=25[main_scaled];'
         
-        # Eğer altyazı varsa filtreye ekle
+        # Altyazı dosyası varsa filtreye ekle, yoksa atla (Return Code 8 önlemi)
         if subtitle_file:
-            # Windows/Linux dosya yolu uyumluluğu için path içindeki ters slash'leri düzeltiyoruz
             safe_sub_path = subtitle_file.replace('\\', '/')
             sub_filter = f"[main_scaled]subtitles='{safe_sub_path}':force_style='FontName=DejaVuSans,FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&H80000000,BorderStyle=4'[subbed];"
             current_target_v = "[subbed]"
@@ -454,6 +450,10 @@ def start_m3u_stream():
             time.sleep(0.1)
         else:
             print(f"⚠️ Yayın koptu (Return Code: {process.returncode}). Yeniden deneniyor...")
+            print("📜 FFmpeg Son Hata Satırları:")
+            for err_line in list(stderr_tail)[-10:]:
+                print(f"   {err_line}")
+                
             duration_this_attempt = current_stream_seconds - last_seconds
             if duration_this_attempt < FAST_FAIL_THRESHOLD_SECONDS:
                 consecutive_fast_failures += 1
