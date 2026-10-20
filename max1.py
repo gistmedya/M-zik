@@ -25,7 +25,6 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from urllib.parse import urljoin
 
 import requests
 
@@ -37,7 +36,7 @@ RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/yerli1.m3u"
 LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/1791922972561.png"
 
-STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "fil.json")
+STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "m.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
 
 STREAM_USER_AGENT = (
@@ -48,7 +47,7 @@ STREAM_REFERER = "https://vidmody.com/"
 STREAM_ORIGIN = "https://vidmody.com"
 
 LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "1.0"))
-TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "0.7"))
+TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "0.6"))
 BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
 DECODER_THREADS = os.getenv("DECODER_THREADS", "1")
@@ -72,12 +71,6 @@ SEEK_BACKOFF_AFTER_FAILURES = int(os.getenv("SEEK_BACKOFF_AFTER_FAILURES", "2"))
 MAX_CONSECUTIVE_FAILURES = int(os.getenv("MAX_CONSECUTIVE_FAILURES", "4"))
 FAST_FAIL_THRESHOLD_SECONDS = 20
 MAX_RETRY_DELAY_SECONDS = 120
-
-# ÇİFT URL ("video;ses") AYARLARI
-# Bu kadar art arda hızlı hatadan sonra sadece video URL'si ile denenir (0 = kapalı).
-DUAL_FALLBACK_AFTER_FAILURES = int(os.getenv("DUAL_FALLBACK_AFTER_FAILURES", "3"))
-# Ayrı ses akışında zaman kaymalarını düzelten senkron filtresi (1 = açık, 0 = kapalı).
-DUAL_AUDIO_SYNC = os.getenv("DUAL_AUDIO_SYNC", "1") == "1"
 
 
 # ===================== KALICI RTMP ÇIKIŞ SÜRECİ =====================
@@ -159,48 +152,6 @@ def format_hms(total_seconds):
     return f"{total_seconds // 3600:02d}:{(total_seconds % 3600) // 60:02d}:{total_seconds % 60:02d}"
 
 
-# URL -> süre (sn). Bağlantı kopup aynı film yeniden denendiğinde ffprobe tekrar çalıştırılmaz.
-_DURATION_CACHE = {}
-
-
-def get_hls_duration(url, depth=0):
-    """
-    HLS VOD listelerinde (#EXT-X-ENDLIST var) #EXTINF sürelerini toplayarak toplam süreyi hesaplar.
-    ffprobe'dan çok daha hızlıdır. Canlı HLS veya hata durumunda 0.0 döner (ffprobe'a düşülür).
-    """
-    if depth > 2 or '.m3u8' not in url.lower():
-        return 0.0
-    try:
-        headers = {'User-Agent': STREAM_USER_AGENT, 'Referer': STREAM_REFERER, 'Origin': STREAM_ORIGIN}
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code != 200:
-            return 0.0
-        lines = [l.strip() for l in response.text.splitlines() if l.strip()]
-        if not lines or not lines[0].startswith('#EXTM3U'):
-            return 0.0
-
-        # Master liste: ilk varyantın medya listesine in.
-        for i, l in enumerate(lines):
-            if l.startswith('#EXT-X-STREAM-INF'):
-                for nxt in lines[i + 1:]:
-                    if not nxt.startswith('#'):
-                        return get_hls_duration(urljoin(url, nxt), depth + 1)
-                return 0.0
-
-        # Canlı yayında ENDLIST olmaz, toplam süre yoktur.
-        if not any(l.startswith('#EXT-X-ENDLIST') for l in lines):
-            return 0.0
-
-        total = 0.0
-        for l in lines:
-            m = re.match(r'#EXTINF:([\d.]+)', l)
-            if m:
-                total += float(m.group(1))
-        return total
-    except Exception:
-        return 0.0
-
-
 def get_video_duration_ffprobe(video_url, retries=3, timeout=15):
     """
     PROFESYONEL FFPROBE SÜRE TESPİT MEKANİZMASI:
@@ -208,54 +159,30 @@ def get_video_duration_ffprobe(video_url, retries=3, timeout=15):
     - Ağ zaman aşımı (-rw_timeout) eklenerek kilitlenmeler önlenir.
     - JSON çıktısı analiz edilip hem format hem de stream seviyesinden süre çekilir.
     """
-    # 1) Önbellek: aynı URL için ffprobe tekrar çalıştırılmaz.
-    if video_url in _DURATION_CACHE:
-        cached = _DURATION_CACHE[video_url]
-        print(f"⚡ Süre önbellekten alındı: {cached:.1f} sn ({format_hms(cached)})")
-        return cached
-
-    # 2) HLS VOD hızlı yol: playlist'ten süre hesaplanır, ffprobe'a gerek kalmaz.
-    hls_duration = get_hls_duration(video_url)
-    if hls_duration > 0:
-        _DURATION_CACHE[video_url] = hls_duration
-        print(f"⚡ HLS playlist'ten süre okundu: {hls_duration:.1f} sn ({format_hms(hls_duration)})")
-        return hls_duration
-
-    # 3) ffprobe: önce hızlı/hafif, olmazsa kademeli olarak daha derin analiz.
-    stages = [
-        (max(5, timeout // 2), 3000000),   # Hızlı deneme
-        (timeout, 10000000),               # Normal deneme
-        (timeout + 10, 20000000),          # Derin deneme
+    ffprobe_cmd = [
+        'ffprobe',
+        '-v', 'quiet',
+        '-print_format', 'json',
+        '-show_format',
+        '-show_streams',
+        '-allowed_extensions', 'ALL',
+        '-headers', f"User-Agent: {STREAM_USER_AGENT}\r\nReferer: {STREAM_REFERER}\r\nOrigin: {STREAM_ORIGIN}\r\n",
+        '-rw_timeout', str(timeout * 1000000),  # Mikrosaniye (15 sn)
+        '-analyzeduration', '10000000',         # Deep analysis (10s)
+        '-probesize', '10000000',               # Deep analysis (10MB)
+        video_url
     ]
-
-    def build_cmd(attempt):
-        stage_timeout, stage_probe = stages[min(attempt, len(stages)) - 1]
-        cmd = [
-            'ffprobe',
-            '-v', 'quiet',
-            '-print_format', 'json',
-            '-show_format',
-            '-show_streams',
-            '-allowed_extensions', 'ALL',
-            '-headers', f"User-Agent: {STREAM_USER_AGENT}\r\nReferer: {STREAM_REFERER}\r\nOrigin: {STREAM_ORIGIN}\r\n",
-            '-rw_timeout', str(stage_timeout * 1000000),  # Mikrosaniye
-            '-analyzeduration', str(stage_probe),
-            '-probesize', str(stage_probe),
-            video_url
-        ]
-        return cmd, stage_timeout + 5
 
     for attempt in range(1, retries + 1):
         try:
             print(f"⏱️ ffprobe analizi başlatılıyor (Deneme {attempt}/{retries})...")
-            ffprobe_cmd, run_timeout = build_cmd(attempt)
-
+            
             result = subprocess.run(
                 ffprobe_cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                timeout=run_timeout
+                timeout=timeout + 5
             )
 
             if result.returncode != 0:
@@ -270,7 +197,6 @@ def get_video_duration_ffprobe(video_url, retries=3, timeout=15):
                 try:
                     duration = float(data['format']['duration'])
                     if duration > 0:
-                        _DURATION_CACHE[video_url] = duration
                         print(f"✅ ffprobe ile süre okundu (Format): {duration:.1f} sn ({format_hms(duration)})")
                         return duration
                 except (ValueError, TypeError):
@@ -283,7 +209,6 @@ def get_video_duration_ffprobe(video_url, retries=3, timeout=15):
                         try:
                             duration = float(stream['duration'])
                             if duration > 0:
-                                _DURATION_CACHE[video_url] = duration
                                 print(f"✅ ffprobe ile süre okundu (Stream): {duration:.1f} sn ({format_hms(duration)})")
                                 return duration
                         except (ValueError, TypeError):
@@ -460,22 +385,6 @@ HEADERS_ARG = (
 )
 
 
-def split_dual_url(target_url):
-    """'video;ses' biçimini ayrıştırır. (video_url, audio_url) döner; tek URL ise audio_url boştur."""
-    video_url, _, audio_url = target_url.partition(";")
-    return video_url.strip(), audio_url.strip()
-
-
-def get_total_duration(target_url):
-    """Toplam süre: önce video URL'sinden, okunamazsa (çift URL ise) ses URL'sinden denenir."""
-    video_url, audio_url = split_dual_url(target_url)
-    duration = get_video_duration_ffprobe(video_url)
-    if duration > 0 or not audio_url:
-        return duration
-    print("ℹ️ Video süresi okunamadı, ses URL'sinden süre deneniyor...")
-    return get_video_duration_ffprobe(audio_url)
-
-
 def make_input_options(url):
     is_hls = '.m3u8' in url.lower()
     opts = [
@@ -502,31 +411,28 @@ def make_input_options(url):
     return opts
 
 
-def build_reader_command(target_url, seek_seconds, video_only=False):
+def build_reader_command(target_url, seek_seconds):
     seek_args = ['-ss', str(int(seek_seconds))] if seek_seconds > 0 else []
 
-    video_url, audio_url = split_dual_url(target_url)
-    audio_filter = []
-
-    if audio_url and not video_only:
+    if ";" in target_url:
+        video_url, audio_url = (p.strip() for p in target_url.split(";", 1))
         input_args = (
             make_input_options(video_url) + seek_args + ['-i', video_url] +
             make_input_options(audio_url) + seek_args + ['-i', audio_url]
         )
         audio_map = ['-map', '1:a:0?']
         logo_index = 2
-        if DUAL_AUDIO_SYNC:
-            # Ayrı gelen ses akışının zaman damgası kaymalarını düzeltir.
-            audio_filter = ['-af', 'aresample=async=1:first_pts=0']
     else:
-        input_args = make_input_options(video_url) + seek_args + ['-i', video_url]
+        input_args = make_input_options(target_url) + seek_args + ['-i', target_url]
         audio_map = ['-map', '0:a:0?']
         logo_index = 1
 
     title_drawtext = (
         f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
-        f"fontcolor=white@{TEXT_OPACITY}:fontsize=26:x=w-tw-60:y=h-th-60"
+        f"fontcolor=white@{TEXT_OPACITY}:fontsize=19:x=w-tw-20:y=h-th-20"
     )
+    # Sol alttaki süre göstergesi (time_drawtext) tamamen kaldırıldı.
+
     base_scale = (
         '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
         'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
@@ -537,7 +443,7 @@ def build_reader_command(target_url, seek_seconds, video_only=False):
         logo_inputs = ['-i', 'logo.png']
         filter_str = (
             base_scale +
-            f'[{logo_index}:v]scale=-2:125,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
+            f'[{logo_index}:v]scale=-2:85,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
             '[main][logo1]overlay=50:50[tmp1];'
             f'[tmp1]{title_drawtext}[v]'
         )
@@ -552,7 +458,7 @@ def build_reader_command(target_url, seek_seconds, video_only=False):
         ['ffmpeg'] + input_args + logo_inputs + [
             '-filter_complex', filter_str,
             '-map', '[v]',
-        ] + audio_map + audio_filter + [
+        ] + audio_map + [
             '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
             '-r', '25', '-b:v', '2500k', '-maxrate', '2500k', '-bufsize', '3000k', '-g', '50',
             '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-ar', '44100',
@@ -613,11 +519,6 @@ def run_reader(command, output, base_seconds, total_duration_sec, ctx):
         played = int(hrs) * 3600 + int(mins) * 60 + float(secs)
         current_seconds = base_seconds + played
 
-        if total_duration_sec > 0:
-            write_text_file('time.txt', format_hms(max(0, total_duration_sec - current_seconds)))
-        else:
-            write_text_file('time.txt', format_hms(current_seconds))
-
         now = time.time()
         progress[0] = now
         progress[1] = True
@@ -641,9 +542,9 @@ def is_really_finished(result, base_seconds, total_duration_sec):
     """Film GERÇEKTEN bitti mi? Return code 0 tek başına yetmez."""
     if result.returncode != 0:
         return False
-
+    
     played_seconds = result.stream_seconds - base_seconds
-
+    
     # 10 saniyeden az oynatıldıysa kesinlikle kaynak erken koptu/seek hatası oluştu demektir.
     if played_seconds < 10:
         return False
@@ -651,7 +552,7 @@ def is_really_finished(result, base_seconds, total_duration_sec):
     # Toplam süre biliniyorsa tolerans kontrolü yap.
     if total_duration_sec > 0:
         return result.stream_seconds >= total_duration_sec - END_TOLERANCE_SECONDS
-
+    
     # Toplam süre bilinmiyorsa: Gerçekten bitti diyebilmek için en az 60 saniye kesintisiz yayın yapılmış olması gerekir.
     return played_seconds > 60
 
@@ -700,11 +601,8 @@ def start_m3u_stream():
             last_title = film_title
             write_text_file('title.txt', film_title)
 
-            total_duration_sec = get_total_duration(target_url)
-            write_text_file(
-                'time.txt',
-                format_hms(max(0, total_duration_sec - last_seconds) if total_duration_sec > 0 else 0),
-            )
+            probe_url = target_url.split(";")[0].strip()
+            total_duration_sec = get_video_duration_ffprobe(probe_url)
 
             print("=" * 60)
             print("📺 Maxanimasyon Canlı Aktarım Yayını (1080p 25fps - 2500k) Başlatılıyor")
@@ -719,16 +617,7 @@ def start_m3u_stream():
             if not output.alive():
                 output.start()
 
-            _, dual_audio_url = split_dual_url(target_url)
-            video_only = bool(
-                dual_audio_url
-                and DUAL_FALLBACK_AFTER_FAILURES > 0
-                and consecutive_failures >= DUAL_FALLBACK_AFTER_FAILURES
-            )
-            if video_only:
-                print(f"🔁 Çift URL art arda {consecutive_failures} kez hata verdi, bu denemede sadece video URL'si kullanılacak.")
-
-            command = build_reader_command(target_url, last_seconds, video_only=video_only)
+            command = build_reader_command(target_url, last_seconds)
             print("▶ Okuyucu FFmpeg başlatıldı, kalıcı RTMP'ye aktarılıyor...")
 
             ctx = {"index": current_index, "url": target_url, "title": film_title, "playlist_len": playlist_len}
