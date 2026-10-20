@@ -34,7 +34,7 @@ STREAM_KEY = os.getenv("STREAM_KEY") or "megatv_@"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
 M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/yerli1.m3u"
-LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/1792502908917.png"
+LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/1792513077170.png"
 
 STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "m.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
@@ -429,7 +429,7 @@ def build_reader_command(target_url, seek_seconds):
 
     title_drawtext = (
         f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
-        f"fontcolor=white@{TEXT_OPACITY}:fontsize=26:x=w-tw-56:y=h-th-52"
+        f"fontcolor=white@{TEXT_OPACITY}:fontsize=27:x=w-tw-58:y=h-th-58"
     )
     # Sol alttaki süre göstergesi (time_drawtext) tamamen kaldırıldı.
 
@@ -443,8 +443,8 @@ def build_reader_command(target_url, seek_seconds):
         logo_inputs = ['-i', 'logo.png']
         filter_str = (
             base_scale +
-            f'[{logo_index}:v]scale=-2:107,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
-            '[main][logo1]overlay=50:47[tmp1];'
+            f'[{logo_index}:v]scale=-2:110,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
+            '[main][logo1]overlay=50:49[tmp1];'
             f'[tmp1]{title_drawtext}[v]'
         )
     else:
