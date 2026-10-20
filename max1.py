@@ -47,7 +47,7 @@ STREAM_REFERER = "https://vidmody.com/"
 STREAM_ORIGIN = "https://vidmody.com"
 
 LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "1.0"))
-TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "0.6"))
+TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "0.5"))
 BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
 DECODER_THREADS = os.getenv("DECODER_THREADS", "1")
@@ -429,7 +429,7 @@ def build_reader_command(target_url, seek_seconds):
 
     title_drawtext = (
         f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
-        f"fontcolor=white@{TEXT_OPACITY}:fontsize=19:x=w-tw-20:y=h-th-20"
+        f"fontcolor=white@{TEXT_OPACITY}:fontsize=26:x=w-tw-60:y=h-th-60"
     )
     # Sol alttaki süre göstergesi (time_drawtext) tamamen kaldırıldı.
 
@@ -443,7 +443,7 @@ def build_reader_command(target_url, seek_seconds):
         logo_inputs = ['-i', 'logo.png']
         filter_str = (
             base_scale +
-            f'[{logo_index}:v]scale=-2:85,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
+            f'[{logo_index}:v]scale=-2:100,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
             '[main][logo1]overlay=50:50[tmp1];'
             f'[tmp1]{title_drawtext}[v]'
         )
