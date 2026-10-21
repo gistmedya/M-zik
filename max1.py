@@ -444,7 +444,7 @@ def build_reader_command(target_url, seek_seconds):
         filter_str = (
             base_scale +
             f'[{logo_index}:v]scale=-2:120,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
-            '[main][logo1]overlay=57:37[tmp1];'
+            '[main][logo1]overlay=60:30[tmp1];'
             f'[tmp1]{title_drawtext}[v]'
         )
     else:
