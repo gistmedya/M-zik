@@ -429,7 +429,7 @@ def build_reader_command(target_url, seek_seconds):
 
     title_drawtext = (
         f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
-        f"fontcolor=white@{TEXT_OPACITY}:fontsize=27:x=w-tw-58:y=h-th-58"
+        f"fontcolor=white@{TEXT_OPACITY}:fontsize=29:x=w-tw-60:y=h-th-58"
     )
     # Sol alttaki süre göstergesi (time_drawtext) tamamen kaldırıldı.
 
@@ -443,8 +443,8 @@ def build_reader_command(target_url, seek_seconds):
         logo_inputs = ['-i', 'logo.png']
         filter_str = (
             base_scale +
-            f'[{logo_index}:v]scale=-2:110,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
-            '[main][logo1]overlay=50:49[tmp1];'
+            f'[{logo_index}:v]scale=-2:115,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
+            '[main][logo1]overlay=50:50[tmp1];'
             f'[tmp1]{title_drawtext}[v]'
         )
     else:
