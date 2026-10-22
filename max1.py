@@ -162,12 +162,6 @@ def get_video_duration_ffprobe(video_url):
 
 # ===================== ALTYAZI YARDIMCILARI =====================
 def parse_subtitle_from_url(stream_url):
-    """
-    URL içinde altyazı belirtilmiş mi diye bakar:
-      - http://video.mp4|sub=http://sub.srt
-      - http://video.mp4;sub=http://sub.srt
-    Döner: (temiz_video_url, subtitle_url veya None)
-    """
     sub_url = None
     video_url = stream_url
     for sep in ("|sub=", ";sub="):
@@ -180,10 +174,6 @@ def parse_subtitle_from_url(stream_url):
 
 
 def download_subtitle(sub_url):
-    """
-    Harici altyazıyı indirir. .vtt ise .srt'ye çevirir.
-    Döner: yerel dosya yolu veya None.
-    """
     if not sub_url:
         return None
     try:
@@ -207,7 +197,6 @@ def download_subtitle(sub_url):
             f.write(r.content)
         print(f"✅ Harici altyazı indirildi: {path} ({len(r.content)} bayt)")
 
-        # .vtt ise .srt'ye çevir (FFmpeg yakma için daha stabil)
         if ext == ".vtt":
             srt_path = "subtitle.srt"
             convert_cmd = [
@@ -229,10 +218,6 @@ def download_subtitle(sub_url):
 
 
 def probe_has_subtitle_track(probe_url):
-    """
-    ffprobe ile dosyada subtitle stream var mı ve forced mu kontrol eder.
-    Döner: dict(has_sub=bool, forced_idx=int|None, any_idx=int|None)
-    """
     cmd = [
         'ffprobe', '-v', 'error',
         '-show_entries', 'stream=index,codec_type:stream_disposition=forced',
@@ -264,7 +249,6 @@ def probe_has_subtitle_track(probe_url):
 
 
 def build_subtitle_style():
-    """subtitles filtresi için stil parametreleri."""
     return (
         f"FontName={SUBTITLE_FONT_NAME},"
         f"FontSize={SUBTITLE_FONT_SIZE},"
@@ -278,7 +262,6 @@ def build_subtitle_style():
 
 
 def build_external_subtitle_filter(sub_path):
-    """İndirilen yerel altyazı dosyası için subtitles filtresi."""
     if not sub_path:
         return None
     safe_path = sub_path.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
@@ -286,10 +269,6 @@ def build_external_subtitle_filter(sub_path):
 
 
 def build_embedded_subtitle_filter(probe_url, stream_index):
-    """
-    Gömülü (dosya içindeki) altyazı track'i için subtitles filtresi.
-    stream_index: -map ile seçilen subtitle stream index'i (dosya içi index).
-    """
     safe_url = probe_url.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
     return (
         f"subtitles=filename='{safe_url}':stream_index={stream_index}"
@@ -333,12 +312,6 @@ def update_local_state(index, seconds, url="", title=""):
 
 
 def get_m3u_playlist(m3u_url):
-    """
-    M3U parser. Desteklenen ek satırlar:
-      - #EXTVLCOPT:sub-file=<URL>   (VLC uyumlu)
-      - #EXTINF:... , Başlık
-      - URL içi |sub= veya ;sub=
-    """
     try:
         headers = {'User-Agent': STREAM_USER_AGENT, 'Referer': STREAM_REFERER}
         response = requests.get(m3u_url, headers=headers, timeout=15)
@@ -357,7 +330,6 @@ def get_m3u_playlist(m3u_url):
                 elif line.startswith('#EXTVLCOPT:sub-file='):
                     pending_sub = line.split('=', 1)[1].strip()
                 elif line.startswith('#EXTVLCOPT:'):
-                    # Diğer EXTVLCOPT satırlarını yoksay
                     continue
                 elif not line.startswith('#') and line.startswith('http'):
                     title = pending_title or os.path.basename(line.split('?')[0])
@@ -452,7 +424,6 @@ def start_m3u_stream():
         raw_target_url = current_item["url"]
         film_title = current_item["title"]
 
-        # Altyazı URL'sini çöz: önce URL içi |sub=, sonra M3U #EXTVLCOPT
         target_stream_url, external_sub_url = parse_subtitle_from_url(raw_target_url)
         if not external_sub_url and current_item.get("sub"):
             external_sub_url = current_item["sub"]
@@ -475,18 +446,15 @@ def start_m3u_stream():
         if total_duration_sec <= 0:
             total_duration_sec = get_video_duration_ffprobe(probe_url)
 
-        # ===================== ALTYAZI KARARI =====================
         subtitle_filter_str = None
         subtitle_mode = "yok"
         if ENABLE_FORCED_SUBTITLES:
-            # 1) Harici altyazı (M3U veya URL içi)
             if external_sub_url:
                 sub_path = download_subtitle(external_sub_url)
                 if sub_path:
                     subtitle_filter_str = build_external_subtitle_filter(sub_path)
                     subtitle_mode = f"harici ({sub_path})"
 
-            # 2) Gömülü forced subtitle track
             if not subtitle_filter_str:
                 sub_info = probe_has_subtitle_track(probe_url)
                 if sub_info["has_sub"] and sub_info["forced_idx"] is not None:
@@ -541,7 +509,6 @@ def start_m3u_stream():
         has_logo1 = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
         title_drawtext = f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':fontcolor=white@{TEXT_OPACITY}:fontsize=31:x=w-tw-60:y=h-th-48"
 
-        # Video filtre zinciri
         v_filters = []
         if has_logo1:
             logo_inputs = ['-i', 'logo.png']
@@ -563,7 +530,6 @@ def start_m3u_stream():
             )
             current_label = 'main'
 
-        # Altyazıyı başlığın altına bindir (önce altyazı, sonra title)
         if subtitle_filter_str:
             v_filters.append(f'[{current_label}]{subtitle_filter_str}[tmp2]')
             current_label = 'tmp2'
@@ -647,8 +613,7 @@ def start_m3u_stream():
                         write_step_summary(film_title, current_index, len(playlist), current_stream_seconds)
                         last_dashboard_time = now
 
-        # ===================== BİTİŞ KONTROLÜ =====================
-        finished_naturally = (process.returncode == 0) and is_really_finished(current_stream_seconds, total_duration_sec)
+        finished_naturally = (process.returncode == 0)
 
         if finished_naturally:
             print("✅ İçerik gerçekten bitti, sonraki videoya geçiliyor.")
@@ -660,9 +625,7 @@ def start_m3u_stream():
             update_local_state(current_index, 0, "", "")
             consecutive_fast_failures = 0
         else:
-            if process.returncode == 0:
-                print(f"⚠️ FFmpeg 0 kodu verdi ancak film tamamlanmadı ({format_hms(current_stream_seconds)} / {format_hms(total_duration_sec)}). Erken kopma sayıldı!")
-            elif process.returncode == -9:
+            if process.returncode == -9:
                 print("⚠️ FFmpeg watchdog (donma) nedeniyle sonlandırıldı.")
 
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="🔴 Bağlantı koptu, tekrar denenecek")
