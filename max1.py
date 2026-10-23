@@ -10,10 +10,29 @@ import json
 import requests
 import threading
 from collections import deque
+import shutil
+
+# ===================== OTOMATİK FFMPEG KONTROLÜ VE KURULUMU =====================
+def ensure_ffmpeg_installed():
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        print("⚙️ Sistemde FFmpeg / FFprobe bulunamadı. Otomatik kurulum başlatılıyor...")
+        try:
+            # Root yetkisi varsa doğrudan kur, yoksa sudo ile dene
+            cmd = ['apt-get', 'update', '-y']
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            install_cmd = ['apt-get', 'install', '-y', 'ffmpeg']
+            subprocess.run(install_cmd, check=True)
+            print("✅ FFmpeg başarıyla kuruldu.")
+        except Exception as e:
+            print(f"⚠️ Otomatik FFmpeg kurulurken hata oluştu veya yetki yetersiz: {e}")
+            print("💡 Lütfen terminalden manuel olarak 'sudo apt install ffmpeg' komutunu çalıştırın.")
+
+ensure_ffmpeg_installed()
 
 # ===================== AYARLAR =====================
 RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101"
-STREAM_KEY = os.getenv("STREAM_KEY") or "zirve"
+STREAM_KEY = os.getenv("STREAM_KEY") or "zirvesa"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
 M3U8_URL = os.getenv("M3U8_URL") or "https://v2.catcast.tv/content/50736/seg-27708703-v1-a1/index.m3u8"
@@ -529,7 +548,7 @@ def start_stream():
         has_logo1 = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
         title_drawtext = f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':fontcolor=white@{TEXT_OPACITY}:fontsize=19:x=w-tw-20:y=h-th-20"
 
-        # DEĞİŞİKLİK BURADA: Geri sayım / geçen süre yerine doğrudan gerçek sistem saati (SS:DD:SN) formatı eklendi
+        # Sol altta gerçek sistem saati (SS:DD:SN) formatı aktif
         time_text = "%{localtime\\:%H\\:%M\\:%S}"
         time_drawtext = f"drawtext=text='{time_text}':fontfile='{BOLD_FONT_PATH}':fontcolor=white@{TEXT_OPACITY}:fontsize=18:x=20:y=h-th-20"
 
