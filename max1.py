@@ -18,7 +18,7 @@ RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
 # M3U8 URL (ortam değişkeni veya varsayılan)
 M3U8_URL = os.getenv("M3U8_URL") or "https://v2.catcast.tv/content/50736/seg-34816-v1-a1/index.m3u8"
-LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/1792791688463.png"
+LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/1792794197378.png"
 
 STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", ".json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
@@ -367,8 +367,8 @@ def start_m3u8_stream():
             # Logo sağ üst köşede olacak (overlay=W-w-50:50)
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
-                f'[{logo1_input_index}:v]scale=-2:91,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
-                '[main][logo1]overlay=W-w-104:80[tmp1];'
+                f'[{logo1_input_index}:v]scale=-2:83,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
+                '[main][logo1]overlay=W-w-70:70[tmp1];'
                 f'[tmp1]{title_drawtext}[v]'
             )
         else:
