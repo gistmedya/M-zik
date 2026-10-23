@@ -13,45 +13,88 @@ from collections import deque
 
 # ===================== AYARLAR =====================
 RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101"
-STREAM_KEY = os.getenv("STREAM_KEY") or "seriesone@"
+STREAM_KEY = os.getenv("STREAM_KEY") or "zirve"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
-M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/deneme.m3u"
-LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/1792622077010.png"
+M3U8_URL = os.getenv("M3U8_URL") or "https://v2.catcast.tv/content/50736/seg-27708703-v1-a1/index.m3u8"
+LOGO_URL = os.getenv("LOGO_URL") or "https://i.hizliresim.com/on1bgkjg.png"
 
-STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "m.json")
+STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "state_yerli.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
 
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 STREAM_REFERER = "https://vidmody.com/"
 
-# Logo ve yazı opaklık ayarları (0.0 - 1.0 arası)
 LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "1.0"))
-TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "0.5"))
+TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "1.0"))
 BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+REGULAR_FONT_PATH = os.getenv("REGULAR_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
 
-# Decoder'ı tek thread'e zorlamak için
 DECODER_THREADS = os.getenv("DECODER_THREADS", "1")
 
-# ===================== ALTYAZI AYARLARI =====================
-ENABLE_FORCED_SUBTITLES = os.getenv("ENABLE_FORCED_SUBTITLES", "1") == "1"
-SUBTITLE_FONT_NAME = os.getenv("SUBTITLE_FONT_NAME", "DejaVu Sans")
-SUBTITLE_FONT_SIZE = int(os.getenv("SUBTITLE_FONT_SIZE", "22"))
-SUBTITLE_PRIMARY_COLOR = os.getenv("SUBTITLE_PRIMARY_COLOR", "&H00FFFFFF")  # beyaz
-SUBTITLE_OUTLINE_COLOR = os.getenv("SUBTITLE_OUTLINE_COLOR", "&H00000000")  # siyah
-SUBTITLE_OUTLINE = int(os.getenv("SUBTITLE_OUTLINE", "2"))
-SUBTITLE_SHADOW = int(os.getenv("SUBTITLE_SHADOW", "1"))
-SUBTITLE_MARGIN_V = int(os.getenv("SUBTITLE_MARGIN_V", "40"))
-SUBTITLE_UA = STREAM_USER_AGENT
-
-# Watchdog Zaman Aşımları (Saniye)
 WATCHDOG_STARTUP_SECONDS = int(os.getenv("WATCHDOG_STARTUP_SECONDS", "60"))
 WATCHDOG_TIMEOUT_SECONDS = int(os.getenv("WATCHDOG_TIMEOUT_SECONDS", "45"))
 
-# Tolerans ve Geri Sarma Ayarları
 END_TOLERANCE_SECONDS = 15
 SEEK_BACKOFF_SECONDS = 10
 LINK_CHANGE_REWIND_SECONDS = int(os.getenv("LINK_CHANGE_REWIND_SECONDS", "15"))
+
+# Hava durumu ayarları
+WEATHER_CITIES = ["Adana", "Konya", "İstanbul", "Ankara", "Mersin", "Muğla", "Ağrı", "Diyarbakır"]
+WEATHER_ROTATE_SECONDS = 15
+WEATHER_UPDATE_SECONDS = int(os.getenv("WEATHER_UPDATE_SECONDS", "600"))
+WEATHER_CACHE_DATA = "weather_data.json"
+
+WEATHER_CODE_MAP = {
+    "113": ("☀️", "Güneşli"),
+    "116": ("⛅", "Parçalı Bulutlu"),
+    "119": ("☁️", "Bulutlu"),
+    "122": ("☁️", "Kapalı"),
+    "143": ("🌫️", "Puslu"),
+    "176": ("🌦️", "Hafif Yağmurlu"),
+    "179": ("🌨️", "Hafif Kar"),
+    "182": ("🌧️", "Karla Karışık Yağmur"),
+    "185": ("🌧️", "Karla Karışık Çisenti"),
+    "200": ("⛈️", "Gök Gürültülü"),
+    "227": ("🌨️", "Kar Fırtınası"),
+    "230": ("❄️", "Kar Fırtınası"),
+    "248": ("🌫️", "Sisli"),
+    "260": ("🌫️", "Donmuş Sis"),
+    "263": ("🌦️", "Hafif Çisenti"),
+    "266": ("🌦️", "Çisenti"),
+    "281": ("🌧️", "Donmuş Çisenti"),
+    "284": ("🌧️", "Yoğun Donmuş Çisenti"),
+    "293": ("🌦️", "Hafif Yağmur"),
+    "296": ("🌧️", "Hafif Yağmur"),
+    "299": ("🌧️", "Orta Yağmur"),
+    "302": ("🌧️", "Orta Yağmur"),
+    "305": ("🌧️", "Şiddetli Yağmur"),
+    "308": ("🌧️", "Şiddetli Yağmur"),
+    "311": ("🌧️", "Hafif Donmuş Yağmur"),
+    "314": ("🌧️", "Donmuş Yağmur"),
+    "317": ("🌨️", "Hafif Sulu Kar"),
+    "320": ("🌨️", "Sulu Kar"),
+    "323": ("🌨️", "Hafif Kar"),
+    "326": ("🌨️", "Hafif Kar"),
+    "329": ("❄️", "Orta Kar"),
+    "332": ("❄️", "Orta Kar"),
+    "335": ("❄️", "Yoğun Kar"),
+    "338": ("❄️", "Yoğun Kar"),
+    "350": ("🌧️", "Buz Kristali"),
+    "353": ("🌦️", "Hafif Sağanak"),
+    "356": ("🌧️", "Sağanak"),
+    "359": ("🌧️", "Şiddetli Sağanak"),
+    "362": ("🌨️", "Hafif Sulu Kar Sağanağı"),
+    "365": ("🌨️", "Sulu Kar Sağanağı"),
+    "368": ("🌨️", "Hafif Kar Sağanağı"),
+    "371": ("❄️", "Yoğun Kar Sağanağı"),
+    "374": ("🌧️", "Hafif Buz Sağanağı"),
+    "377": ("🌧️", "Buz Sağanağı"),
+    "386": ("⛈️", "Gök Gürültülü Yağmur"),
+    "389": ("⛈️", "Şiddetli Gök Gürültülü Yağmur"),
+    "392": ("⛈️", "Gök Gürültülü Kar"),
+    "395": ("⛈️", "Yoğun Gök Gürültülü Kar"),
+}
 
 
 def format_hms(total_seconds):
@@ -60,6 +103,145 @@ def format_hms(total_seconds):
     mins = (total_seconds % 3600) // 60
     secs = total_seconds % 60
     return f"{hrs:02d}:{mins:02d}:{secs:02d}"
+
+
+# ===================== HAVA DURUMU =====================
+def fetch_weather_for_city(city):
+    try:
+        url = f"https://wttr.in/{city}?format=j1&lang=tr"
+        headers = {'User-Agent': 'curl/7.68.0'}
+        r = requests.get(url, headers=headers, timeout=12)
+        if r.status_code == 200:
+            data = r.json()
+            current = data.get("current_condition", [{}])[0]
+            temp = current.get("temp_C", "--")
+            code = str(current.get("weatherCode", ""))
+            desc_list = current.get("lang_tr", [{}])
+            tr_desc = None
+            if desc_list and isinstance(desc_list, list):
+                tr_desc = desc_list[0].get("value")
+            emoji, tr_label = WEATHER_CODE_MAP.get(code, ("🌡️", tr_desc or "Bilinmiyor"))
+            return {
+                "city": city,
+                "emoji": emoji,
+                "label": tr_label,
+                "temp": f"{temp}°C",
+            }
+    except Exception as e:
+        print(f"⚠️ Hava durumu alınamadı ({city}): {e}")
+    return {
+        "city": city,
+        "emoji": "🌡️",
+        "label": "Bilinmiyor",
+        "temp": "--",
+    }
+
+
+def update_weather_file():
+    data = {}
+    for city in WEATHER_CITIES:
+        info = fetch_weather_for_city(city)
+        data[city] = info
+        time.sleep(0.4)
+    try:
+        with open(WEATHER_CACHE_DATA, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        print("🌤️ Hava durumu güncellendi.")
+    except Exception as e:
+        print(f"⚠️ Hava durumu dosyası yazılamadı: {e}")
+
+
+def weather_loop():
+    while True:
+        update_weather_file()
+        time.sleep(WEATHER_UPDATE_SECONDS)
+
+
+def build_weather_overlay_filters(canvas_h=1080, canvas_w=1920):
+    if not os.path.exists(WEATHER_CACHE_DATA):
+        try:
+            dummy = {c: {"city": c, "emoji": "🌡️", "label": "Bilinmiyor", "temp": "--"} for c in WEATHER_CITIES}
+            with open(WEATHER_CACHE_DATA, "w", encoding="utf-8") as f:
+                json.dump(dummy, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    try:
+        with open(WEATHER_CACHE_DATA, "r", encoding="utf-8") as f:
+            wdata = json.load(f)
+    except Exception:
+        wdata = {}
+
+    filters = []
+
+    # KOMPAKT KUTU BOYUTLARI (küçültüldü)
+    box_w = 260
+    box_h = 100
+    box_x = canvas_w - box_w - 25
+    box_y = 25
+
+    for i, city in enumerate(WEATHER_CITIES):
+        start = i * WEATHER_ROTATE_SECONDS
+        end = (i + 1) * WEATHER_ROTATE_SECONDS
+        info = wdata.get(city, {})
+        emoji = info.get("emoji", "🌡️")
+        temp = info.get("temp", "--")
+        label = info.get("label", "Bilinmiyor")
+
+        line1 = f"{emoji}  {city.upper()}"
+        line2 = f"{temp}   {label}"
+
+        fname1 = f"weather_{i}_1.txt"
+        fname2 = f"weather_{i}_2.txt"
+        try:
+            with open(fname1, "w", encoding="utf-8") as f:
+                f.write(line1)
+            with open(fname2, "w", encoding="utf-8") as f:
+                f.write(line2)
+        except Exception:
+            continue
+
+        enable_expr = f"between(t,{start},{end})"
+
+        # Gölge
+        filters.append(
+            f"drawbox=x={box_x+3}:y={box_y+3}:w={box_w}:h={box_h}:"
+            f"color=black@0.45:t=fill:enable='{enable_expr}'"
+        )
+        # Ana kutu
+        filters.append(
+            f"drawbox=x={box_x}:y={box_y}:w={box_w}:h={box_h}:"
+            f"color=0x0F2A44@0.88:t=fill:enable='{enable_expr}'"
+        )
+        # Üst accent çizgisi
+        filters.append(
+            f"drawbox=x={box_x}:y={box_y}:w={box_w}:h=3:"
+            f"color=0x3AA9FF@1.0:t=fill:enable='{enable_expr}'"
+        )
+        # Sol accent çizgisi
+        filters.append(
+            f"drawbox=x={box_x}:y={box_y}:w=3:h={box_h}:"
+            f"color=0x3AA9FF@1.0:t=fill:enable='{enable_expr}'"
+        )
+
+        # Şehir adı — 20pt bold
+        filters.append(
+            f"drawtext=textfile='{fname1}':reload=0:"
+            f"fontfile='{BOLD_FONT_PATH}':"
+            f"fontcolor=white@{TEXT_OPACITY}:fontsize=20:"
+            f"x={box_x+15}:y={box_y+14}:"
+            f"enable='{enable_expr}'"
+        )
+        # Sıcaklık + açıklama — 16pt regular
+        filters.append(
+            f"drawtext=textfile='{fname2}':reload=0:"
+            f"fontfile='{REGULAR_FONT_PATH}':"
+            f"fontcolor=0xCFE8FF@{TEXT_OPACITY}:fontsize=16:"
+            f"x={box_x+15}:y={box_y+52}:"
+            f"enable='{enable_expr}'"
+        )
+
+    return filters
 
 
 # ===================== KALICI RTMP YAYINCISI =====================
@@ -160,120 +342,10 @@ def get_video_duration_ffprobe(video_url):
     return 0.0
 
 
-# ===================== ALTYAZI YARDIMCILARI =====================
-def parse_subtitle_from_url(stream_url):
-    sub_url = None
-    video_url = stream_url
-    for sep in ("|sub=", ";sub="):
-        if sep in stream_url:
-            parts = stream_url.split(sep, 1)
-            video_url = parts[0].strip()
-            sub_url = parts[1].strip() if len(parts) > 1 else None
-            break
-    return video_url, sub_url
-
-
-def download_subtitle(sub_url):
-    if not sub_url:
-        return None
-    try:
-        headers = {'User-Agent': SUBTITLE_UA, 'Referer': STREAM_REFERER}
-        r = requests.get(sub_url, headers=headers, timeout=20)
-        if r.status_code != 200 or len(r.content) < 50:
-            print(f"⚠️ Altyazı indirilemedi (HTTP {r.status_code}, {len(r.content)} bayt)")
-            return None
-
-        ext = ".srt"
-        low = sub_url.lower().split("?")[0]
-        if low.endswith(".ass"):
-            ext = ".ass"
-        elif low.endswith(".vtt"):
-            ext = ".vtt"
-        elif low.endswith(".ssa"):
-            ext = ".ssa"
-
-        path = f"subtitle{ext}"
-        with open(path, "wb") as f:
-            f.write(r.content)
-        print(f"✅ Harici altyazı indirildi: {path} ({len(r.content)} bayt)")
-
-        if ext == ".vtt":
-            srt_path = "subtitle.srt"
-            convert_cmd = [
-                'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
-                '-i', path, srt_path
-            ]
-            try:
-                subprocess.run(convert_cmd, check=True, timeout=30,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                print(f"✅ VTT → SRT dönüştürüldü: {srt_path}")
-                return srt_path
-            except Exception as ce:
-                print(f"⚠️ VTT→SRT dönüşümü başarısız, VTT ile devam: {ce}")
-                return path
-        return path
-    except Exception as e:
-        print(f"⚠️ Altyazı indirme hatası: {e}")
-    return None
-
-
-def probe_has_subtitle_track(probe_url):
-    cmd = [
-        'ffprobe', '-v', 'error',
-        '-show_entries', 'stream=index,codec_type:stream_disposition=forced',
-        '-of', 'json',
-        '-headers', f"User-Agent: {STREAM_USER_AGENT}\r\nReferer: {STREAM_REFERER}\r\n",
-        probe_url
-    ]
-    try:
-        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, timeout=12).decode('utf-8', 'replace')
-        data = json.loads(out)
-        streams = data.get("streams", [])
-        sub_streams = [s for s in streams if s.get("codec_type") == "subtitle"]
-        if not sub_streams:
-            return {"has_sub": False, "forced_idx": None, "any_idx": None}
-        forced = None
-        for s in sub_streams:
-            disp = s.get("disposition", {}) or {}
-            if disp.get("forced", 0) == 1:
-                forced = s.get("index")
-                break
-        return {
-            "has_sub": True,
-            "forced_idx": forced,
-            "any_idx": sub_streams[0].get("index"),
-        }
-    except Exception as e:
-        print(f"⚠️ ffprobe altyazı kontrolü başarısız: {e}")
-    return {"has_sub": False, "forced_idx": None, "any_idx": None}
-
-
-def build_subtitle_style():
-    return (
-        f"FontName={SUBTITLE_FONT_NAME},"
-        f"FontSize={SUBTITLE_FONT_SIZE},"
-        f"PrimaryColour={SUBTITLE_PRIMARY_COLOR},"
-        f"OutlineColour={SUBTITLE_OUTLINE_COLOR},"
-        f"Outline={SUBTITLE_OUTLINE},"
-        f"Shadow={SUBTITLE_SHADOW},"
-        f"MarginV={SUBTITLE_MARGIN_V},"
-        "Alignment=2"
-    )
-
-
-def build_external_subtitle_filter(sub_path):
-    if not sub_path:
-        return None
-    safe_path = sub_path.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
-    return f"subtitles='{safe_path}':force_style='{build_subtitle_style()}'"
-
-
-def build_embedded_subtitle_filter(probe_url, stream_index):
-    safe_url = probe_url.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
-    return (
-        f"subtitles=filename='{safe_url}':stream_index={stream_index}"
-        f":force_style='{build_subtitle_style()}'"
-    )
+def is_really_finished(current_sec, total_sec):
+    if total_sec <= 0:
+        return True
+    return (total_sec - current_sec) <= END_TOLERANCE_SECONDS
 
 
 def get_local_state():
@@ -309,40 +381,6 @@ def update_local_state(index, seconds, url="", title=""):
         print(f"💾 Konum kaydedildi => İndeks: {index}, Saniye: {int(seconds)}")
     except Exception as e:
         print(f"⚠️ Yerel state yazma hatası: {e}")
-
-
-def get_m3u_playlist(m3u_url):
-    try:
-        headers = {'User-Agent': STREAM_USER_AGENT, 'Referer': STREAM_REFERER}
-        response = requests.get(m3u_url, headers=headers, timeout=15)
-        if response.status_code == 200:
-            lines = response.text.splitlines()
-            playlist = []
-            pending_title = None
-            pending_sub = None
-            for raw_line in lines:
-                line = raw_line.strip()
-                if not line:
-                    continue
-                if line.startswith('#EXTINF'):
-                    match = re.search(r',(.+)$', line)
-                    pending_title = match.group(1).strip() if match else None
-                elif line.startswith('#EXTVLCOPT:sub-file='):
-                    pending_sub = line.split('=', 1)[1].strip()
-                elif line.startswith('#EXTVLCOPT:'):
-                    continue
-                elif not line.startswith('#') and line.startswith('http'):
-                    title = pending_title or os.path.basename(line.split('?')[0])
-                    item = {"url": line, "title": title}
-                    if pending_sub:
-                        item["sub"] = pending_sub
-                    playlist.append(item)
-                    pending_title = None
-                    pending_sub = None
-            return playlist
-    except Exception as e:
-        print(f"⚠️ M3U çekme hatası: {e}")
-    return [{"url": m3u_url, "title": os.path.basename(m3u_url)}]
 
 
 def download_logo():
@@ -394,26 +432,33 @@ def write_step_summary(title, index, playlist_len, seconds, status="🟢 Yayınd
         print(f"⚠️ Step summary yazma hatası: {e}")
 
 
-def start_m3u_stream():
-    print(f"🔧 Kullanılan M3U   : {M3U_URL}")
+def start_stream():
+    print(f"🔧 Kullanılan M3U8  : {M3U8_URL}")
     print(f"🔧 Kullanılan Logo  : {LOGO_URL}")
     print(f"🔧 State dosyası    : {STATE_FILE_NAME}")
     print(f"🔧 RTMP hedefi      : {RTMP_SERVER}")
-    print(f"🔧 Forced altyazı   : {'AÇIK' if ENABLE_FORCED_SUBTITLES else 'KAPALI'}")
 
     download_logo()
+
+    threading.Thread(target=weather_loop, daemon=True).start()
+    update_weather_file()
+
     current_index, last_seconds, last_url, last_title = get_local_state()
 
     consecutive_fast_failures = 0
     FAST_FAIL_THRESHOLD_SECONDS = 20
     MAX_RETRY_DELAY_SECONDS = 120
 
-    while True:
-        playlist = get_m3u_playlist(M3U_URL)
-        if not playlist:
-            time.sleep(10)
-            continue
+    playlist = [{"url": M3U8_URL, "title": "Canlı Yayın"}]
+    if current_index != 0:
+        current_index = 0
+        last_seconds = 0
+        last_url = ""
+        last_title = ""
+        update_local_state(0, 0, "", "")
 
+    while True:
+        playlist = [{"url": M3U8_URL, "title": "Canlı Yayın"}]
         if current_index >= len(playlist):
             current_index = 0
             last_seconds = 0
@@ -421,13 +466,8 @@ def start_m3u_stream():
             last_title = ""
 
         current_item = playlist[current_index]
-        raw_target_url = current_item["url"]
+        target_stream_url = current_item["url"]
         film_title = current_item["title"]
-
-        target_stream_url, external_sub_url = parse_subtitle_from_url(raw_target_url)
-        if not external_sub_url and current_item.get("sub"):
-            external_sub_url = current_item["sub"]
-            print(f"💬 M3U'dan harici altyazı bulundu: {external_sub_url}")
 
         if last_seconds > 0 and last_url and target_stream_url != last_url:
             if last_title and film_title == last_title:
@@ -445,26 +485,6 @@ def start_m3u_stream():
         total_duration_sec = _duration_cache.pop(probe_url, 0.0)
         if total_duration_sec <= 0:
             total_duration_sec = get_video_duration_ffprobe(probe_url)
-
-        subtitle_filter_str = None
-        subtitle_mode = "yok"
-        if ENABLE_FORCED_SUBTITLES:
-            if external_sub_url:
-                sub_path = download_subtitle(external_sub_url)
-                if sub_path:
-                    subtitle_filter_str = build_external_subtitle_filter(sub_path)
-                    subtitle_mode = f"harici ({sub_path})"
-
-            if not subtitle_filter_str:
-                sub_info = probe_has_subtitle_track(probe_url)
-                if sub_info["has_sub"] and sub_info["forced_idx"] is not None:
-                    subtitle_filter_str = build_embedded_subtitle_filter(probe_url, sub_info["forced_idx"])
-                    subtitle_mode = f"gömülü forced (idx={sub_info['forced_idx']})"
-
-        if subtitle_filter_str:
-            print(f"💬 Altyazı aktif: {subtitle_mode}")
-        else:
-            print("💬 Altyazı yok (harici/gömülü forced bulunamadı veya devre dışı).")
 
         print("=" * 60)
         print("📺 Maxanimasyon Canlı Aktarım Yayını Başlatılıyor")
@@ -507,36 +527,33 @@ def start_m3u_stream():
         print_dashboard(film_title, current_index, len(playlist), last_seconds, status="🟡 Başlatılıyor")
 
         has_logo1 = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
-        title_drawtext = f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':fontcolor=white@{TEXT_OPACITY}:fontsize=31:x=w-tw-60:y=h-th-48"
+        title_drawtext = f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':fontcolor=white@{TEXT_OPACITY}:fontsize=19:x=w-tw-20:y=h-th-20"
 
-        v_filters = []
+        # DEĞİŞİKLİK BURADA: Geri sayım / geçen süre yerine doğrudan gerçek sistem saati (SS:DD:SN) formatı eklendi
+        time_text = "%{localtime\\:%H\\:%M\\:%S}"
+        time_drawtext = f"drawtext=text='{time_text}':fontfile='{BOLD_FONT_PATH}':fontcolor=white@{TEXT_OPACITY}:fontsize=18:x=20:y=h-th-20"
+
+        weather_filters = build_weather_overlay_filters(canvas_w=1920, canvas_h=1080)
+        weather_chain = ",".join(weather_filters)
+
         if has_logo1:
             logo_inputs = ['-i', 'logo.png']
-            v_filters.append(
-                '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main]'
+            filter_str = (
+                '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
+                f'[{logo1_input_index}:v]scale=-2:85,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
+                '[main][logo1]overlay=50:50[tmp1];'
+                f'[tmp1]{weather_chain}[tmp1b];'
+                f'[tmp1b]{title_drawtext}[tmp2];'
+                f'[tmp2]{time_drawtext}[v]'
             )
-            v_filters.append(
-                f'[{logo1_input_index}:v]scale=-2:120,format=rgba,'
-                f'colorchannelmixer=aa={LOGO_OPACITY}[logo1]'
-            )
-            v_filters.append('[main][logo1]overlay=60:30[tmp1]')
-            current_label = 'tmp1'
         else:
             logo_inputs = []
-            v_filters.append(
-                '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main]'
+            filter_str = (
+                '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
+                f'[main]{weather_chain}[tmp1b];'
+                f'[tmp1b]{title_drawtext}[tmp2];'
+                f'[tmp2]{time_drawtext}[v]'
             )
-            current_label = 'main'
-
-        if subtitle_filter_str:
-            v_filters.append(f'[{current_label}]{subtitle_filter_str}[tmp2]')
-            current_label = 'tmp2'
-
-        v_filters.append(f'[{current_label}]{title_drawtext}[v]')
-
-        filter_str = ';'.join(v_filters)
 
         publisher.ensure_running()
         ts_offset = publisher.clock() + 1.0
@@ -559,7 +576,7 @@ def start_m3u_stream():
             universal_newlines=True
         )
 
-        if len(playlist) > 0:
+        if len(playlist) > 1:
             next_item = playlist[(current_index + 1) % len(playlist)]
             threading.Thread(target=prefetch_duration, args=(next_item["url"],), daemon=True).start()
 
@@ -613,19 +630,21 @@ def start_m3u_stream():
                         write_step_summary(film_title, current_index, len(playlist), current_stream_seconds)
                         last_dashboard_time = now
 
-        finished_naturally = (process.returncode == 0)
+        finished_naturally = (process.returncode == 0) and is_really_finished(current_stream_seconds, total_duration_sec)
 
         if finished_naturally:
-            print("✅ İçerik gerçekten bitti, sonraki videoya geçiliyor.")
-            write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="✅ Bitti, sıradakine geçiliyor")
-            current_index += 1
+            print("✅ İçerik gerçekten bitti, başa dönülüyor.")
+            write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="✅ Bitti, başa dönülüyor")
+            current_index = 0
             last_seconds = 0
             last_url = ""
             last_title = ""
             update_local_state(current_index, 0, "", "")
             consecutive_fast_failures = 0
         else:
-            if process.returncode == -9:
+            if process.returncode == 0:
+                print(f"⚠️ FFmpeg 0 kodu verdi ancak film tamamlanmadı ({format_hms(current_stream_seconds)} / {format_hms(total_duration_sec)}). Erken kopma sayıldı!")
+            elif process.returncode == -9:
                 print("⚠️ FFmpeg watchdog (donma) nedeniyle sonlandırıldı.")
 
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="🔴 Bağlantı koptu, tekrar denenecek")
@@ -637,8 +656,8 @@ def start_m3u_stream():
                 consecutive_fast_failures = 0
 
             if consecutive_fast_failures >= 3:
-                print(f"❌ {film_title} akışı sürekli hataya düştü. Sonraki içeriğe atlanıyor...")
-                current_index += 1
+                print(f"❌ {film_title} akışı sürekli hataya düştü. Baştan başlanıyor...")
+                current_index = 0
                 last_seconds = 0
                 last_url = ""
                 last_title = ""
@@ -662,7 +681,7 @@ def start_m3u_stream():
 
 if __name__ == "__main__":
     try:
-        start_m3u_stream()
+        start_stream()
     except KeyboardInterrupt:
         print("\n🛑 Durduruluyor...")
     finally:
