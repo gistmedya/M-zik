@@ -13,7 +13,7 @@ from collections import deque
 
 # ===================== AYARLAR =====================
 RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101"
-STREAM_KEY = os.getenv("STREAM_KEY") or "maxtvv"
+STREAM_KEY = os.getenv("STREAM_KEY") or "seriesone@"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
 # M3U8 URL (ortam değişkeni veya varsayılan)
