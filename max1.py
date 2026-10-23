@@ -32,7 +32,7 @@ ensure_ffmpeg_installed()
 
 # ===================== AYARLAR =====================
 RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101"
-STREAM_KEY = os.getenv("STREAM_KEY") or "zirvesa"
+STREAM_KEY = os.getenv("STREAM_KEY") or "zirve"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
 M3U8_URL = os.getenv("M3U8_URL") or "https://v2.catcast.tv/content/50736/seg-27708703-v1-a1/index.m3u8"
