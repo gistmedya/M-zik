@@ -749,4 +749,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n🛑 Durduruluyor...")
     finally:
-        publisher.stop() ve 
+        publisher.stop()
+        
