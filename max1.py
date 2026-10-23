@@ -57,6 +57,9 @@ END_TOLERANCE_SECONDS = 15
 SEEK_BACKOFF_SECONDS = 10
 LINK_CHANGE_REWIND_SECONDS = int(os.getenv("LINK_CHANGE_REWIND_SECONDS", "15"))
 
+# Saat gösterge ayarları (sol alt köşe)
+CLOCK_TIMEZONE = os.getenv("CLOCK_TIMEZONE", "Europe/Istanbul")
+
 # Hava durumu ayarları
 WEATHER_CITIES = ["Adana", "Konya", "İstanbul", "Ankara", "Mersin", "Muğla", "Ağrı", "Diyarbakır"]
 WEATHER_ROTATE_SECONDS = 15
@@ -541,8 +544,13 @@ def start_stream():
         title_drawtext = f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':fontcolor=white@{TEXT_OPACITY}:fontsize=19:x=w-tw-20:y=h-th-20"
 
         # Sol altta 24 saat formatında canlı sistem saati (%H: 24 saat tabanlıdır)
+        # Okunaklılık için yarı saydam siyah kutu eklendi
         time_text = "%{localtime\\:%H\\:%M\\:%S}"
-        time_drawtext = f"drawtext=text='{time_text}':fontfile='{BOLD_FONT_PATH}':fontcolor=white@{TEXT_OPACITY}:fontsize=18:x=20:y=h-th-20"
+        time_drawtext = (
+            f"drawtext=text='{time_text}':fontfile='{BOLD_FONT_PATH}':"
+            f"fontcolor=white@{TEXT_OPACITY}:fontsize=22:x=20:y=h-th-28:"
+            f"box=1:boxcolor=black@0.55:boxborderw=8"
+        )
 
         weather_filters = build_weather_overlay_filters(canvas_w=1920, canvas_h=1080)
         weather_chain = ",".join(weather_filters)
@@ -580,11 +588,13 @@ def start_stream():
             '-f', 'mpegts', 'pipe:1'
         ]
 
+        # TZ değişkeni sayesinde saat Türkiye saatiyle (varsayılan) gösterilir
         process = subprocess.Popen(
             command,
             stdout=publisher.proc.stdin,
             stderr=subprocess.PIPE,
-            universal_newlines=True
+            universal_newlines=True,
+            env={**os.environ, "TZ": CLOCK_TIMEZONE}
         )
 
         if len(playlist) > 1:
