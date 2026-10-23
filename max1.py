@@ -16,48 +16,36 @@ RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101"
 STREAM_KEY = os.getenv("STREAM_KEY") or "maxtvv"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
-# === M3U8 URL SİSTEMİ (M3U kaldırıldı) ===
-# Virgülle ayrılmış birden fazla M3U8 URL desteklenir.
-# Örnek: M3U8_URLS="https://v2.catcast.tv/content/50736/seg-34816-v1-a1/index.m3u8"
-# Tek URL için M3U8_URL de kullanılabilir.
-_raw_m3u8_urls = os.getenv("M3U8_URLS") or os.getenv("M3U8_URL") or ""
-M3U8_URLS = [u.strip() for u in _raw_m3u8_urls.split(",") if u.strip()]
-# Başlıklar (opsiyonel, virgülle ayrılmış; URL sayısıyla eşleşmeli)
-_raw_m3u8_titles = os.getenv("M3U8_TITLES") or ""
-M3U8_TITLES = [t.strip() for t in _raw_m3u8_titles.split(",") if t.strip()]
-
+# M3U8 URL (ortam değişkeni veya varsayılan)
+M3U8_URL = os.getenv("M3U8_URL") or "https://v2.catcast.tv/content/50736/seg-34816-v1-a1/index.m3u8"
 LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/1792791688463.png"
 
-STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "zirvesa.json")
+STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", ".json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
 
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-STREAM_REFERER = "https://ha.vixolity.com/"
+STREAM_REFERER = "https://vidmody.com/"
 
-# Logo ve yazı opaklık ayarları
+# Logo ve yazı opaklık ayarları (0.0 - 1.0 arası)
 LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "1.0"))
 TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "0.0"))
 BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
+# Decoder'ı tek thread'e zorlamak için
 DECODER_THREADS = os.getenv("DECODER_THREADS", "1")
 
-WATCHDOG_STARTUP_SECONDS = int(os.getenv("WATCHDOG_STARTUP_SECONDS", "60"))
-WATCHDOG_TIMEOUT_SECONDS = int(os.getenv("WATCHDOG_TIMEOUT_SECONDS", "45"))
+# Watchdog Zaman Aşımları (Saniye)
+WATCHDOG_STARTUP_SECONDS = int(os.getenv("WATCHDOG_STARTUP_SECONDS", "60"))  # İlk açılış toleransı
+WATCHDOG_TIMEOUT_SECONDS = int(os.getenv("WATCHDOG_TIMEOUT_SECONDS", "45"))  # Yayın ortası donma toleransı
 
-END_TOLERANCE_SECONDS = 15
-SEEK_BACKOFF_SECONDS = 10
+# Tolerans ve Geri Sarma Ayarları
+END_TOLERANCE_SECONDS = 15  # Bitişe bu kadar saniye kaldıysa film gerçekten bitmiş sayılır
+SEEK_BACKOFF_SECONDS = 10   # Sürekli çöken noktada kaç saniye geriye sarılacak
 LINK_CHANGE_REWIND_SECONDS = int(os.getenv("LINK_CHANGE_REWIND_SECONDS", "15"))
-
-# ===================== ALTYAZI AYARLARI =====================
-SUBTITLE_FILE = "subs.srt"
-SUBTITLE_MAP_FILE = os.getenv("SUBTITLE_MAP_FILE", "subtitles.json")
-ENABLE_SUBTITLES = os.getenv("ENABLE_SUBTITLES", "1") == "1"
-SUBTITLE_FONT_SIZE = int(os.getenv("SUBTITLE_FONT_SIZE", "24"))
-SUBTITLE_MARGIN_V = int(os.getenv("SUBTITLE_MARGIN_V", "40"))
-SUBTITLE_OUTLINE = int(os.getenv("SUBTITLE_OUTLINE", "2"))
 
 
 def format_hms(total_seconds):
+    """Saniyeyi SS:DD:SS formatına çevirir."""
     total_seconds = max(0, int(total_seconds))
     hrs = total_seconds // 3600
     mins = (total_seconds % 3600) // 60
@@ -67,6 +55,11 @@ def format_hms(total_seconds):
 
 # ===================== KALICI RTMP YAYINCISI =====================
 class RtmpPublisher:
+    """
+    RTMP sunucusuna SÜREKLİ bağlı kalan tek bir FFmpeg süreci.
+    Filmleri kodlayan FFmpeg süreçleri çıktılarını (MPEG-TS) bu sürecin stdin'ine yazar.
+    """
+
     def __init__(self):
         self.proc = None
         self.started_at = 0.0
@@ -144,6 +137,7 @@ def prefetch_duration(stream_url):
 
 
 def get_video_duration_ffprobe(video_url):
+    """FFprobe ile videonun GERÇEK toplam süresini çeker."""
     cmd = [
         'ffprobe',
         '-v', 'error',
@@ -163,181 +157,18 @@ def get_video_duration_ffprobe(video_url):
     return 0.0
 
 
-# ===================== ALTYAZI YARDIMCILARI =====================
-def _list_subtitle_streams(stream_url):
-    url = probe_url_of(stream_url)
-    cmd = [
-        'ffprobe', '-v', 'error',
-        '-select_streams', 's',
-        '-show_entries', 'stream=index,codec_name:stream_tags=language,title',
-        '-of', 'json',
-        '-headers', f"User-Agent: {STREAM_USER_AGENT}\r\nReferer: {STREAM_REFERER}\r\n",
-        url
-    ]
-    try:
-        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, timeout=20).decode('utf-8', 'replace')
-        data = json.loads(out)
-        result = []
-        for s in data.get("streams", []):
-            tags = s.get("tags", {}) or {}
-            result.append((s.get("index"), s.get("codec_name", ""), tags.get("language", ""), tags.get("title", "")))
-        return result
-    except Exception as e:
-        print(f"⚠️ Altyazı stream listesi alınamadı: {e}")
-        return []
-
-
-def prepare_subtitles(stream_url):
-    if not ENABLE_SUBTITLES:
-        print("ℹ️ Altyazı özelliği kapalı (ENABLE_SUBTITLES=0).")
-        return False
-
-    try:
-        if os.path.exists(SUBTITLE_FILE):
-            os.remove(SUBTITLE_FILE)
-    except Exception:
-        pass
-
-    url = probe_url_of(stream_url)
-    subs = _list_subtitle_streams(url)
-    if not subs:
-        print("ℹ️ Kaynakta altyazı stream'i bulunamadı.")
-        return False
-
-    print(f"🔎 {len(subs)} altyazı stream'i bulundu: {subs}")
-
-    chosen = None
-    for s in subs:
-        if (s[2] or "").lower() in ("tur", "tr", "turkish"):
-            chosen = s
-            break
-    if chosen is None:
-        chosen = subs[0]
-
-    sub_index = chosen[0]
-    print(f"🎯 Seçilen altyazı stream index={sub_index}, codec={chosen[1]}, lang={chosen[2]}")
-
-    cmd = [
-        'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
-        '-headers', f"User-Agent: {STREAM_USER_AGENT}\r\nReferer: {STREAM_REFERER}\r\n",
-        '-i', url,
-        '-map', f'0:{sub_index}',
-        '-c:s', 'srt',
-        SUBTITLE_FILE
-    ]
-    try:
-        subprocess.run(cmd, check=True, timeout=120)
-        if os.path.exists(SUBTITLE_FILE) and os.path.getsize(SUBTITLE_FILE) > 0:
-            print(f"✅ Altyazı çıkarıldı: {SUBTITLE_FILE} ({os.path.getsize(SUBTITLE_FILE)} bayt)")
-            return True
-    except subprocess.CalledProcessError as e:
-        print(f"⚠️ Altyazı çıkarma başarısız (returncode={e.returncode}).")
-    except Exception as e:
-        print(f"⚠️ Altyazı çıkarma hatası: {e}")
-
-    try:
-        if os.path.exists(SUBTITLE_FILE):
-            os.remove(SUBTITLE_FILE)
-    except Exception:
-        pass
-    return False
-
-
-def load_subtitle_map():
-    """subtitles.json haritasını yükler. Gömülü yedek de desteklenir."""
-    embedded = {
-        # Buraya isterseniz doğrudan JSON içeriği girebilirsiniz:
-        # "Film Adı 1": "https://ornek.com/film1.srt",
-        # "Film Adı 2": "https://ornek.com/film2.tr.srt",
-    }
-
-    env_json = os.getenv("SUBTITLE_MAP_JSON")
-    if env_json:
-        try:
-            data = json.loads(env_json)
-            if isinstance(data, dict):
-                return data
-        except Exception as e:
-            print(f"⚠️ SUBTITLE_MAP_JSON parse hatası: {e}")
-
-    if os.path.exists(SUBTITLE_MAP_FILE):
-        try:
-            with open(SUBTITLE_MAP_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, dict):
-                    return data
-                print(f"⚠️ {SUBTITLE_MAP_FILE} bir JSON nesnesi değil, yok sayılıyor.")
-        except Exception as e:
-            print(f"⚠️ Altyazı haritası okunamadı ({SUBTITLE_MAP_FILE}): {e}")
-
-    return embedded
-
-
-def _lookup_subtitle_url(sub_map, film_title):
-    if not sub_map or not film_title:
-        return None
-    if film_title in sub_map:
-        return sub_map[film_title]
-    norm = film_title.strip().lower()
-    for k, v in sub_map.items():
-        if k.strip().lower() == norm:
-            return v
-    for k, v in sub_map.items():
-        if k.strip().lower() in norm or norm in k.strip().lower():
-            return v
-    return None
-
-
-def download_external_subtitle(film_title):
-    if not ENABLE_SUBTITLES:
-        return False
-    sub_map = load_subtitle_map()
-    url = _lookup_subtitle_url(sub_map, film_title)
-    if not url:
-        print(f"ℹ️ '{film_title}' için harici altyazı tanımı yok.")
-        return False
-
-    try:
-        if os.path.exists(SUBTITLE_FILE):
-            os.remove(SUBTITLE_FILE)
-        headers = {'User-Agent': STREAM_USER_AGENT, 'Referer': STREAM_REFERER}
-        r = requests.get(url, headers=headers, timeout=30)
-        if r.status_code == 200 and len(r.content) > 0:
-            with open(SUBTITLE_FILE, 'wb') as f:
-                f.write(r.content)
-            print(f"✅ Harici altyazı indirildi: {url} ({len(r.content)} bayt)")
-            return True
-        else:
-            print(f"⚠️ Altyazı indirilemedi: HTTP {r.status_code}")
-    except Exception as e:
-        print(f"⚠️ Altyazı indirme hatası: {e}")
-    return False
-
-
-def build_subtitle_filter():
-    if not (ENABLE_SUBTITLES and os.path.exists(SUBTITLE_FILE) and os.path.getsize(SUBTITLE_FILE) > 0):
-        return ""
-    style = (
-        f"FontName=DejaVu Sans,"
-        f"FontSize={SUBTITLE_FONT_SIZE},"
-        f"PrimaryColour=&H00FFFFFF,"
-        f"OutlineColour=&H00000000,"
-        f"BorderStyle=1,"
-        f"Outline={SUBTITLE_OUTLINE},"
-        f"Shadow=0,"
-        f"MarginV={SUBTITLE_MARGIN_V},"
-        f"Alignment=2"
-    )
-    return f"subtitles={SUBTITLE_FILE}:force_style='{style}'"
-
-
 def is_really_finished(current_sec, total_sec):
+    """
+    Sadece FFmpeg'in 0 vermesine güvenmez.
+    İzlenen sürenin toplam süreye ulaşıp ulaşmadığını kontrol eder (Sahte Bitiş Koruması).
+    """
     if total_sec <= 0:
-        return True
+        return True  # Toplam süre bilinmiyorsa FFmpeg'in 0 çıkışına güvenmek zorundayız.
     return (total_sec - current_sec) <= END_TOLERANCE_SECONDS
 
 
 def get_local_state():
+    """Yerel state dosyasından son durumu okur."""
     if os.path.exists(STATE_FILE_NAME):
         if os.path.getsize(STATE_FILE_NAME) == 0:
             return 0, 0, "", ""
@@ -345,21 +176,20 @@ def get_local_state():
             with open(STATE_FILE_NAME, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 return (
-                    data.get("last_index", 0),
                     data.get("last_seconds", 0),
                     data.get("last_url", ""),
                     data.get("last_title", "")
                 )
         except Exception as e:
             print(f"⚠️ Yerel state okuma hatası: {e}")
-    return 0, 0, "", ""
+    return 0, "", ""
 
 
-def update_local_state(index, seconds, url="", title=""):
+def update_local_state(seconds, url="", title=""):
+    """Atomik yazım mantığıyla son konumu kaydeder."""
     tmp_file = f"{STATE_FILE_NAME}.tmp"
     try:
         data = {
-            "last_index": int(index),
             "last_seconds": int(seconds),
             "last_url": url,
             "last_title": title,
@@ -367,40 +197,9 @@ def update_local_state(index, seconds, url="", title=""):
         with open(tmp_file, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         os.replace(tmp_file, STATE_FILE_NAME)
-        print(f"💾 Konum kaydedildi => İndeks: {index}, Saniye: {int(seconds)}")
+        print(f"💾 Konum kaydedildi => Saniye: {int(seconds)}")
     except Exception as e:
         print(f"⚠️ Yerel state yazma hatası: {e}")
-
-
-# ===================== M3U8 PLAYLIST (M3U KALDIRILDI) =====================
-def get_m3u8_playlist():
-    """
-    M3U8 URL'lerinden playlist oluşturur.
-    - M3U8_URLS (virgülle ayrılmış) veya M3U8_URL env değişkeni kullanılır.
-    - M3U8_TITLES (virgülle ayrılmış) ile başlıklar özelleştirilebilir.
-    - Başlık verilmemişse URL'den türetilir.
-    """
-    if not M3U8_URLS:
-        print("⚠️ M3U8_URLS veya M3U8_URL env değişkeni tanımlı değil!")
-        return []
-
-    playlist = []
-    for idx, url in enumerate(M3U8_URLS):
-        if idx < len(M3U8_TITLES) and M3U8_TITLES[idx]:
-            title = M3U8_TITLES[idx]
-        else:
-            # URL'den başlık türet: son path parçası, .m3u8 uzantısını temizle
-            try:
-                base = url.split("?")[0].rstrip("/").split("/")[-1]
-                title = re.sub(r'\.m3u8$', '', base, flags=re.IGNORECASE) or f"İçerik {idx + 1}"
-            except Exception:
-                title = f"İçerik {idx + 1}"
-        playlist.append({"url": url, "title": title})
-
-    print(f"📋 M3U8 playlist yüklendi: {len(playlist)} içerik")
-    for i, item in enumerate(playlist):
-        print(f"   {i + 1}. {item['title']}")
-    return playlist
 
 
 def download_logo():
@@ -423,16 +222,32 @@ def write_title_file(title):
         print(f"⚠️ Başlık dosyası yazma hatası: {e}")
 
 
-def print_dashboard(title, index, playlist_len, seconds, status="🟢 Yayında"):
+def derive_title_from_url(url):
+    """M3U8 URL'sinden okunabilir bir başlık türetir."""
+    try:
+        path = url.split("?")[0].rstrip("/")
+        name = os.path.basename(path)
+        if name:
+            # .m3u8 veya .m3u uzantısını temizle
+            name = re.sub(r'\.(m3u8?|ts)$', '', name, flags=re.IGNORECASE)
+            # Alt çizgi ve tireleri boşluğa çevir
+            name = name.replace('_', ' ').replace('-', ' ').strip()
+            if name:
+                return name
+    except Exception:
+        pass
+    return "Canlı Yayın"
+
+
+def print_dashboard(title, seconds, status="🟢 Yayında"):
     print("┌" + "─" * 58 + "┐")
     print(f"│ 🎬 İçerik         : {title[:36]:<36} │")
-    print(f"│ 🔢 Sıra           : {index + 1}/{playlist_len:<32} │")
     print(f"│ ⏱️  Geçen Süre     : {format_hms(seconds):<36} │")
     print(f"│ 📡 Durum          : {status:<36} │")
     print("└" + "─" * 58 + "┘")
 
 
-def write_step_summary(title, index, playlist_len, seconds, status="🟢 Yayında"):
+def write_step_summary(title, seconds, status="🟢 Yayında"):
     if not GITHUB_STEP_SUMMARY:
         return
     try:
@@ -441,7 +256,6 @@ def write_step_summary(title, index, playlist_len, seconds, status="🟢 Yayınd
             "| Alan | Değer |\n"
             "|---|---|\n"
             f"| 🎬 Şu an oynayan içerik | {title} |\n"
-            f"| 🔢 Playlist sırası | {index + 1} / {playlist_len} |\n"
             f"| ⏱️ Geçen süre | {format_hms(seconds)} (sa:dk:sn) |\n"
             f"| 📡 Durum | {status} |\n"
             f"| 🕒 Son güncelleme | {time.strftime('%Y-%m-%d %H:%M:%S')} |\n"
@@ -452,44 +266,40 @@ def write_step_summary(title, index, playlist_len, seconds, status="🟢 Yayınd
         print(f"⚠️ Step summary yazma hatası: {e}")
 
 
-def start_m3u_stream():
-    print(f"🔧 M3U8 URL sayısı    : {len(M3U8_URLS)}")
-    for u in M3U8_URLS:
-        print(f"   → {u}")
-    print(f"🔧 Kullanılan Logo    : {LOGO_URL}")
-    print(f"🔧 State dosyası      : {STATE_FILE_NAME}")
-    print(f"🔧 RTMP hedefi        : {RTMP_SERVER}")
-    print(f"🔧 Altyazı aktif mi   : {ENABLE_SUBTITLES}")
-    print(f"🔧 Altyazı haritası   : {SUBTITLE_MAP_FILE}")
+def start_m3u8_stream():
+    global M3U8_URL
 
-    if not M3U8_URLS:
-        print("❌ HATA: M3U8_URLS veya M3U8_URL env değişkeni tanımlı değil. Çıkılıyor.")
-        return
+    if not M3U8_URL:
+        print("❌ M3U8_URL ortam değişkeni tanımlanmamış!")
+        print("   Kullanım: M3U8_URL='https://ornek.com/yayin.m3u8' python3 script.py")
+        sys.exit(1)
+
+    print(f"🔧 Kullanılan M3U8  : {M3U8_URL}")
+    print(f"🔧 Kullanılan Logo  : {LOGO_URL}")
+    print(f"🔧 State dosyası    : {STATE_FILE_NAME}")
+    print(f"🔧 RTMP hedefi      : {RTMP_SERVER}")
 
     download_logo()
-    current_index, last_seconds, last_url, last_title = get_local_state()
+
+    # Tek bir yayın URL'si olduğu için state'ten sadece saniye/url/title okunur
+    last_seconds, last_url, last_title = get_local_state()
+
+    # URL değişmişse sıfırdan başla
+    if last_url and last_url != M3U8_URL:
+        print("🔄 URL değişmiş, sıfırdan başlanacak.")
+        last_seconds = 0
+        last_title = ""
 
     consecutive_fast_failures = 0
     FAST_FAIL_THRESHOLD_SECONDS = 20
     MAX_RETRY_DELAY_SECONDS = 120
 
+    film_title = last_title or derive_title_from_url(M3U8_URL)
+
     while True:
-        playlist = get_m3u8_playlist()
-        if not playlist:
-            print("⚠️ Playlist boş, 10 saniye sonra tekrar denenecek...")
-            time.sleep(10)
-            continue
+        target_stream_url = M3U8_URL
 
-        if current_index >= len(playlist):
-            current_index = 0
-            last_seconds = 0
-            last_url = ""
-            last_title = ""
-
-        current_item = playlist[current_index]
-        target_stream_url = current_item["url"]
-        film_title = current_item["title"]
-
+        # Link Değişikliği / Süre Rewind Kontrolü
         if last_seconds > 0 and last_url and target_stream_url != last_url:
             if last_title and film_title == last_title:
                 old_seconds = last_seconds
@@ -506,23 +316,6 @@ def start_m3u_stream():
         total_duration_sec = _duration_cache.pop(probe_url, 0.0)
         if total_duration_sec <= 0:
             total_duration_sec = get_video_duration_ffprobe(probe_url)
-
-        # === ALTYAZI HAZIRLIĞI ===
-        if ENABLE_SUBTITLES:
-            need_prepare = (last_seconds == 0) or not (
-                os.path.exists(SUBTITLE_FILE) and os.path.getsize(SUBTITLE_FILE) > 0
-            )
-            if need_prepare:
-                if not download_external_subtitle(film_title):
-                    prepare_subtitles(target_stream_url)
-            else:
-                print(f"ℹ️ Mevcut altyazı dosyası kullanılacak: {SUBTITLE_FILE}")
-
-        subtitle_filter = build_subtitle_filter()
-        if subtitle_filter:
-            print(f"💬 Altyazı filtreye eklenecek: {subtitle_filter}")
-        else:
-            print("ℹ️ Altyazı filtresi boş (dosya yok veya özellik kapalı).")
 
         print("=" * 60)
         print("📺 Maxanimasyon Canlı Aktarım Yayını Başlatılıyor")
@@ -562,51 +355,27 @@ def start_m3u_stream():
             audio_map = ['-map', '0:a:0?']
             logo1_input_index = 1
 
-        print_dashboard(film_title, current_index, len(playlist), last_seconds, status="🟡 Başlatılıyor")
+        print_dashboard(film_title, last_seconds, status="🟡 Başlatılıyor")
 
         has_logo1 = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
-        title_drawtext = f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':fontcolor=white@{TEXT_OPACITY}:fontsize=0:x=w-tw-0:y=h-th-0"
 
-        if total_duration_sec > 0:
-            base_remaining = max(0.0, total_duration_sec - last_seconds)
-            rem_expr = f"ceil(max(0\\,{base_remaining:.3f}-t))"
-        else:
-            rem_expr = f"floor({float(last_seconds):.3f}+t)"
-
-        time_text = f"%{{eif\\:floor({rem_expr}/3600)\\:d\\:2}}\\:%{{eif\\:mod(floor({rem_expr}/60)\\,60)\\:d\\:2}}\\:%{{eif\\:mod({rem_expr}\\,60)\\:d\\:2}}"
-        time_drawtext = f"drawtext=text='{time_text}':fontfile='{BOLD_FONT_PATH}':fontcolor=white@{TEXT_OPACITY}:fontsize=0:x=0:y=h-th-0"
+        # Film adı sol altta olacak şekilde ayarlandı
+        title_drawtext = f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':fontcolor=white@{TEXT_OPACITY}:fontsize=26:x=70:y=h-th-70"
 
         if has_logo1:
             logo_inputs = ['-i', 'logo.png']
+            # Logo sağ üst köşede olacak (overlay=W-w-50:50)
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
-            )
-            if subtitle_filter:
-                filter_str += f'[main]{subtitle_filter}[main_sub];'
-                base_label = 'main_sub'
-            else:
-                base_label = 'main'
-
-            filter_str += (
-                f'[{logo1_input_index}:v]scale=-2:85,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
-                f'[{base_label}][logo1]overlay=50:50[tmp1];'
-                f'[tmp1]{title_drawtext}[tmp2];'
-                f'[tmp2]{time_drawtext}[v]'
+                f'[{logo1_input_index}:v]scale=-2:91,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
+                '[main][logo1]overlay=W-w-104:80[tmp1];'
+                f'[tmp1]{title_drawtext}[v]'
             )
         else:
             logo_inputs = []
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
-            )
-            if subtitle_filter:
-                filter_str += f'[main]{subtitle_filter}[main_sub];'
-                base_label = 'main_sub'
-            else:
-                base_label = 'main'
-
-            filter_str += (
-                f'[{base_label}]{title_drawtext}[tmp2];'
-                f'[tmp2]{time_drawtext}[v]'
+                f'[main]{title_drawtext}[v]'
             )
 
         publisher.ensure_running()
@@ -630,15 +399,12 @@ def start_m3u_stream():
             universal_newlines=True
         )
 
-        if len(playlist) > 0:
-            next_item = playlist[(current_index + 1) % len(playlist)]
-            threading.Thread(target=prefetch_duration, args=(next_item["url"],), daemon=True).start()
-
         last_save_time = time.time()
         last_dashboard_time = time.time()
         current_stream_seconds = last_seconds
         stderr_tail = deque(maxlen=40)
 
+        # WATCHDOG Mantığı (Başlangıç ve Normal Yayın Toleranslı)
         last_progress_time = [time.time()]
         has_started_progress = [False]
 
@@ -676,37 +442,33 @@ def start_m3u_stream():
                     has_started_progress[0] = True
 
                     if now - last_save_time > 30:
-                        update_local_state(current_index, current_stream_seconds, target_stream_url, film_title)
+                        update_local_state(current_stream_seconds, target_stream_url, film_title)
                         last_save_time = now
 
                     if now - last_dashboard_time > 30:
-                        print_dashboard(film_title, current_index, len(playlist), current_stream_seconds)
-                        write_step_summary(film_title, current_index, len(playlist), current_stream_seconds)
+                        print_dashboard(film_title, current_stream_seconds)
+                        write_step_summary(film_title, current_stream_seconds)
                         last_dashboard_time = now
 
+        # ===================== GELİŞMİŞ BİTİŞ VE KOPMA KONTROLÜ =====================
         finished_naturally = (process.returncode == 0) and is_really_finished(current_stream_seconds, total_duration_sec)
 
         if finished_naturally:
-            print("✅ İçerik gerçekten bitti, sonraki videoya geçiliyor.")
-            write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="✅ Bitti, sıradakine geçiliyor")
-            current_index += 1
+            print("✅ İçerik gerçekten bitti, baştan başlatılıyor (loop).")
+            write_step_summary(film_title, current_stream_seconds, status="✅ Bitti, baştan başlıyor")
             last_seconds = 0
             last_url = ""
             last_title = ""
-            update_local_state(current_index, 0, "", "")
+            update_local_state(0, "", "")
             consecutive_fast_failures = 0
-            try:
-                if os.path.exists(SUBTITLE_FILE):
-                    os.remove(SUBTITLE_FILE)
-            except Exception:
-                pass
         else:
+            # Erken kapanma veya kopma durumu
             if process.returncode == 0:
-                print(f"⚠️ FFmpeg 0 kodu verdi ancak film tamamlanmadı ({format_hms(current_stream_seconds)} / {format_hms(total_duration_sec)}). Erken kopma sayıldı!")
+                print(f"⚠️ FFmpeg 0 kodu verdi ancak yayın tamamlanmadı ({format_hms(current_stream_seconds)} / {format_hms(total_duration_sec)}). Erken kopma sayıldı!")
             elif process.returncode == -9:
                 print("⚠️ FFmpeg watchdog (donma) nedeniyle sonlandırıldı.")
 
-            write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="🔴 Bağlantı koptu, tekrar denenecek")
+            write_step_summary(film_title, current_stream_seconds, status="🔴 Bağlantı koptu, tekrar denenecek")
 
             duration_this_attempt = current_stream_seconds - last_seconds
             if duration_this_attempt < FAST_FAIL_THRESHOLD_SECONDS:
@@ -714,20 +476,16 @@ def start_m3u_stream():
             else:
                 consecutive_fast_failures = 0
 
+            # 3 Kez üst üste hızlı çökme yaşanırsa baştan başlat
             if consecutive_fast_failures >= 3:
-                print(f"❌ {film_title} akışı sürekli hataya düştü. Sonraki içeriğe atlanıyor...")
-                current_index += 1
+                print(f"❌ {film_title} akışı sürekli hataya düştü. Baştan başlatılıyor...")
                 last_seconds = 0
                 last_url = ""
                 last_title = ""
                 consecutive_fast_failures = 0
-                update_local_state(current_index, 0, "", "")
-                try:
-                    if os.path.exists(SUBTITLE_FILE):
-                        os.remove(SUBTITLE_FILE)
-                except Exception:
-                    pass
+                update_local_state(0, "", "")
             else:
+                # SEEK BACKOFF: Eğer sürekli aynı noktada çöküyorsa bozuk kareyi (corrupt frame) atlamak için biraz geri sar
                 if consecutive_fast_failures > 1 and current_stream_seconds > SEEK_BACKOFF_SECONDS:
                     last_seconds = max(0, current_stream_seconds - SEEK_BACKOFF_SECONDS)
                     print(f"⏪ Takılma koruması: {SEEK_BACKOFF_SECONDS} saniye geriye sarılarak ({last_seconds}s) tekrar denenecek.")
@@ -735,19 +493,21 @@ def start_m3u_stream():
                     last_seconds = current_stream_seconds
 
                 last_url = target_stream_url
-                update_local_state(current_index, last_seconds, last_url, film_title)
+                update_local_state(last_seconds, last_url, film_title)
 
         retry_delay = 0 if finished_naturally else (min(5 * (2 ** consecutive_fast_failures), MAX_RETRY_DELAY_SECONDS) if consecutive_fast_failures > 0 else 5)
         if retry_delay > 0:
             print(f"⚠️ {retry_delay} saniye sonra tekrar bağlanılıyor...")
             time.sleep(retry_delay)
 
+        # Sonraki döngü için başlığı yeniden belirle (URL değişmediği için aynı kalır)
+        film_title = derive_title_from_url(M3U8_URL)
+
 
 if __name__ == "__main__":
     try:
-        start_m3u_stream()
+        start_m3u8_stream()
     except KeyboardInterrupt:
         print("\n🛑 Durduruluyor...")
     finally:
         publisher.stop()
-        
