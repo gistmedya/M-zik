@@ -17,7 +17,6 @@ def ensure_ffmpeg_installed():
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
         print("⚙️ Sistemde FFmpeg / FFprobe bulunamadı. Otomatik kurulum başlatılıyor...")
         try:
-            # Root yetkisi varsa doğrudan kur, yoksa sudo ile dene
             cmd = ['apt-get', 'update', '-y']
             subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             
@@ -193,7 +192,6 @@ def build_weather_overlay_filters(canvas_h=1080, canvas_w=1920):
 
     filters = []
 
-    # KOMPAKT KUTU BOYUTLARI (küçültüldü)
     box_w = 260
     box_h = 100
     box_x = canvas_w - box_w - 25
@@ -222,28 +220,23 @@ def build_weather_overlay_filters(canvas_h=1080, canvas_w=1920):
 
         enable_expr = f"between(t,{start},{end})"
 
-        # Gölge
         filters.append(
             f"drawbox=x={box_x+3}:y={box_y+3}:w={box_w}:h={box_h}:"
             f"color=black@0.45:t=fill:enable='{enable_expr}'"
         )
-        # Ana kutu
         filters.append(
             f"drawbox=x={box_x}:y={box_y}:w={box_w}:h={box_h}:"
             f"color=0x0F2A44@0.88:t=fill:enable='{enable_expr}'"
         )
-        # Üst accent çizgisi
         filters.append(
             f"drawbox=x={box_x}:y={box_y}:w={box_w}:h=3:"
             f"color=0x3AA9FF@1.0:t=fill:enable='{enable_expr}'"
         )
-        # Sol accent çizgisi
         filters.append(
             f"drawbox=x={box_x}:y={box_y}:w=3:h={box_h}:"
             f"color=0x3AA9FF@1.0:t=fill:enable='{enable_expr}'"
         )
 
-        # Şehir adı — 20pt bold
         filters.append(
             f"drawtext=textfile='{fname1}':reload=0:"
             f"fontfile='{BOLD_FONT_PATH}':"
@@ -251,7 +244,6 @@ def build_weather_overlay_filters(canvas_h=1080, canvas_w=1920):
             f"x={box_x+15}:y={box_y+14}:"
             f"enable='{enable_expr}'"
         )
-        # Sıcaklık + açıklama — 16pt regular
         filters.append(
             f"drawtext=textfile='{fname2}':reload=0:"
             f"fontfile='{REGULAR_FONT_PATH}':"
@@ -548,7 +540,7 @@ def start_stream():
         has_logo1 = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
         title_drawtext = f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':fontcolor=white@{TEXT_OPACITY}:fontsize=19:x=w-tw-20:y=h-th-20"
 
-        # Sol altta gerçek sistem saati (SS:DD:SN) formatı aktif
+        # Sol altta 24 saat formatında canlı sistem saati (%H: 24 saat tabanlıdır)
         time_text = "%{localtime\\:%H\\:%M\\:%S}"
         time_drawtext = f"drawtext=text='{time_text}':fontfile='{BOLD_FONT_PATH}':fontcolor=white@{TEXT_OPACITY}:fontsize=18:x=20:y=h-th-20"
 
