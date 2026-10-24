@@ -24,26 +24,39 @@ GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
 
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-# ✅ DÜZELTME 1: Tek referer kullan (ffprobe ve ffmpeg aynı olsun)
-STREAM_REFERER = os.getenv("STREAM_REFERER", "https://ha.vixolity.com/")
-STREAM_ORIGIN = os.getenv("STREAM_ORIGIN", "https://ha.vixolity.com")
+# Varsayılan referer (M3U domain'ine göre otomatik değişecek)
+DEFAULT_REFERER = os.getenv("STREAM_REFERER", "https://ha.vixolity.com/")
 
-# Logo ve yazı opaklık ayarları (0.0 - 1.0 arası)
+# Opsiyonel cookie (Cloudflare vs. için)
+STREAM_COOKIE = os.getenv("STREAM_COOKIE", "")
+
+# Logo ve yazı opaklık ayarları
 LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "1.0"))
 TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "0.0"))
 BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
-# Decoder'ı tek thread'e zorlamak için
 DECODER_THREADS = os.getenv("DECODER_THREADS", "1")
 
-# Watchdog Zaman Aşımları (Saniye)
-WATCHDOG_STARTUP_SECONDS = int(os.getenv("WATCHDOG_STARTUP_SECONDS", "60"))
+# Watchdog
+WATCHDOG_STARTUP_SECONDS = int(os.getenv("WATCHDOG_STARTUP_SECONDS", "90"))
 WATCHDOG_TIMEOUT_SECONDS = int(os.getenv("WATCHDOG_TIMEOUT_SECONDS", "45"))
 
-# Tolerans ve Geri Sarma Ayarları
+# Tolerans
 END_TOLERANCE_SECONDS = 15
 SEEK_BACKOFF_SECONDS = 10
 LINK_CHANGE_REWIND_SECONDS = int(os.getenv("LINK_CHANGE_REWIND_SECONDS", "15"))
+
+# ===================== DOMAIN → REFERER HARİTASI =====================
+# ✅ Her domain için doğru referer. Yeni domain eklendikçe buraya ekleyin.
+REFERER_MAP = {
+    "harborstatic.lol": "https://vidmody.com/",
+    "vixolity.com": "https://ha.vixolity.com/",
+    "5455456.xyz": "https://ha.vixolity.com/",
+    "vidmody.com": "https://vidmody.com/",
+    "mediafire.com": "https://www.mediafire.com/",
+    "harborcdn.lol": "https://vidmody.com/",
+    "harborstream.lol": "https://vidmody.com/",
+}
 
 
 def format_hms(total_seconds):
@@ -52,6 +65,29 @@ def format_hms(total_seconds):
     mins = (total_seconds % 3600) // 60
     secs = total_seconds % 60
     return f"{hrs:02d}:{mins:02d}:{secs:02d}"
+
+
+def guess_referer(url):
+    """URL domain'ine göre en uygun referer'ı seç."""
+    for domain, ref in REFERER_MAP.items():
+        if domain in url:
+            return ref
+    return DEFAULT_REFERER
+
+
+def build_headers_arg(referer):
+    """Verilen referer için tam HTTP header seti üret."""
+    h = (
+        f"User-Agent: {STREAM_USER_AGENT}\r\n"
+        f"Referer: {referer}\r\n"
+        f"Origin: {referer.rstrip('/')}\r\n"
+        f"Accept: */*\r\n"
+        f"Accept-Language: tr-TR,tr;q=0.9,en;q=0.8\r\n"
+        f"Connection: keep-alive\r\n"
+    )
+    if STREAM_COOKIE:
+        h += f"Cookie: {STREAM_COOKIE}\r\n"
+    return h
 
 
 # ===================== KALICI RTMP YAYINCISI =====================
@@ -96,7 +132,6 @@ class RtmpPublisher:
             for raw in iter(proc.stderr.readline, b''):
                 line = raw.decode('utf-8', 'replace').rstrip()
                 self.tail.append(line)
-                # ✅ DÜZELTME: RTMP yayıncısı hata verirse göster
                 if any(x in line.lower() for x in ['error', 'failed', 'refused', 'cannot']):
                     print(f"🚨 RTMP: {line}")
         except Exception:
@@ -136,38 +171,67 @@ def prefetch_duration(stream_url):
         _duration_cache[url] = duration
 
 
-# ✅ DÜZELTME 2: ffprobe hatasını tam göster
 def get_video_duration_ffprobe(video_url):
-    cmd = [
-        'ffprobe',
-        '-v', 'error',
-        '-show_entries', 'format=duration',
-        '-of', 'default=noprint_wrappers=1:nokey=1',
-        '-headers', f"User-Agent: {STREAM_USER_AGENT}\r\nReferer: {STREAM_REFERER}\r\nOrigin: {STREAM_ORIGIN}\r\n",
-        '-rw_timeout', '10000000',
-        video_url
-    ]
-    try:
-        result = subprocess.run(cmd, capture_output=True, timeout=20)
-        if result.returncode == 0:
-            raw = result.stdout.decode('utf-8', 'replace').strip()
-            try:
-                duration = float(raw.splitlines()[-1].strip())
-                if duration > 0:
-                    print(f"⏱️ ffprobe ile toplam süre: {duration:.1f}s ({format_hms(duration)})")
-                    return duration
-            except (ValueError, IndexError):
-                pass
-            print(f"⚠️ ffprobe çıktı ama süre parse edilemedi: {raw[:200]}")
-        else:
-            err = result.stderr.decode('utf-8', 'replace').strip()[:500]
-            print(f"⚠️ ffprobe hatası (kod {result.returncode}) URL: {video_url[:100]}")
-            print(f"   → {err}")
-    except subprocess.TimeoutExpired:
-        print(f"⚠️ ffprobe zaman aşımı (20s) URL: {video_url[:100]}")
-    except Exception as e:
-        print(f"⚠️ ffprobe exception: {e}")
+    """Verilen URL için süre okumayı dene, farklı referer'larla fallback yap."""
+    referers_to_try = [guess_referer(video_url), DEFAULT_REFERER, ""]
+
+    for ref in referers_to_try:
+        cmd = [
+            'ffprobe',
+            '-v', 'error',
+            '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            '-rw_timeout', '10000000',
+        ]
+        if ref:
+            cmd += ['-headers', build_headers_arg(ref)]
+        cmd.append(video_url)
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, timeout=20)
+            if result.returncode == 0:
+                raw = result.stdout.decode('utf-8', 'replace').strip()
+                try:
+                    duration = float(raw.splitlines()[-1].strip())
+                    if duration > 0:
+                        print(f"⏱️ ffprobe ile toplam süre: {duration:.1f}s ({format_hms(duration)}) [Referer: {ref or 'YOK'}]")
+                        return duration
+                except (ValueError, IndexError):
+                    pass
+                # 200 ama süre yok (canlı HLS olabilir)
+                print(f"⚠️ ffprobe çıktı ama süre yok: {raw[:150]}")
+                return 0.0
+            else:
+                err = result.stderr.decode('utf-8', 'replace').strip()
+                short = err.splitlines()[-1] if err else "bilinmeyen hata"
+                print(f"⚠️ ffprobe [{ref or 'YOK'}] → {short[:180]}")
+                if "403" not in short and "forbidden" not in short.lower():
+                    # 403 değilse başka referer denemeye gerek yok
+                    return 0.0
+        except subprocess.TimeoutExpired:
+            print(f"⚠️ ffprobe zaman aşımı [Referer: {ref or 'YOK'}]")
+        except Exception as e:
+            print(f"⚠️ ffprobe exception: {e}")
     return 0.0
+
+
+def test_url_accessible(url, referer):
+    """Hızlı erişim testi: sadece ilk byte'ı çek."""
+    try:
+        headers = {"User-Agent": STREAM_USER_AGENT, "Referer": referer, "Range": "bytes=0-1023"}
+        if STREAM_COOKIE:
+            headers["Cookie"] = STREAM_COOKIE
+        r = requests.get(url, headers=headers, timeout=10, stream=True, allow_redirects=True)
+        ok = r.status_code in (200, 206)
+        r.close()
+        return ok, r.status_code
+    except Exception as e:
+        return False, str(e)
+
+
+def is_forbidden_error(stderr_lines):
+    text = "\n".join(stderr_lines).lower()
+    return "403" in text or "forbidden" in text
 
 
 def is_really_finished(current_sec, total_sec):
@@ -213,7 +277,7 @@ def update_local_state(index, seconds, url="", title=""):
 
 def get_m3u_playlist(m3u_url):
     try:
-        headers = {'User-Agent': STREAM_USER_AGENT, 'Referer': STREAM_REFERER}
+        headers = {'User-Agent': STREAM_USER_AGENT, 'Referer': DEFAULT_REFERER}
         response = requests.get(m3u_url, headers=headers, timeout=15)
         if response.status_code == 200:
             lines = response.text.splitlines()
@@ -285,9 +349,7 @@ def write_step_summary(title, index, playlist_len, seconds, status="🟢 Yayınd
         print(f"⚠️ Step summary yazma hatası: {e}")
 
 
-# ✅ DÜZELTME 3: Mediafire gibi sayfa linklerini filtrele
 def is_valid_stream_url(url):
-    """Mediafire, Google Drive gibi HTML sayfa linklerini reddet."""
     bad_patterns = [
         "mediafire.com/file/",
         "drive.google.com/file/",
@@ -306,14 +368,18 @@ def start_m3u_stream():
     print(f"🔧 Kullanılan Logo  : {LOGO_URL}")
     print(f"🔧 State dosyası    : {STATE_FILE_NAME}")
     print(f"🔧 RTMP hedefi      : {RTMP_SERVER}")
-    print(f"🔧 Referer          : {STREAM_REFERER}")
+    print(f"🔧 Varsayılan Referer: {DEFAULT_REFERER}")
+    if STREAM_COOKIE:
+        print(f"🔧 Cookie: aktif ({len(STREAM_COOKIE)} karakter)")
 
     download_logo()
     current_index, last_seconds, last_url, last_title = get_local_state()
 
     consecutive_fast_failures = 0
+    consecutive_403_failures = 0
     FAST_FAIL_THRESHOLD_SECONDS = 20
     MAX_RETRY_DELAY_SECONDS = 120
+    MAX_403_BEFORE_SKIP = 2
 
     while True:
         playlist = get_m3u_playlist(M3U_URL)
@@ -332,9 +398,8 @@ def start_m3u_stream():
         target_stream_url = current_item["url"]
         film_title = current_item["title"]
 
-        # ✅ DÜZELTME: Geçersiz sayfa linklerini atla
         if not is_valid_stream_url(target_stream_url):
-            print(f"⏭️  Geçersiz stream URL (sayfa linki), atlanıyor: {target_stream_url[:120]}")
+            print(f"⏭️  Geçersiz stream URL, atlanıyor: {target_stream_url[:120]}")
             current_index += 1
             last_seconds = 0
             last_url = ""
@@ -346,7 +411,7 @@ def start_m3u_stream():
             if last_title and film_title == last_title:
                 old_seconds = last_seconds
                 last_seconds = max(0, last_seconds - LINK_CHANGE_REWIND_SECONDS)
-                print(f"🔄 İçerik linki yenilenmiş. {old_seconds}s yerine {last_seconds}s'den başlanacak.")
+                print(f"🔄 İçerik linki yenilendi. {old_seconds}s → {last_seconds}s")
             else:
                 last_seconds = 0
 
@@ -354,7 +419,26 @@ def start_m3u_stream():
         last_title = film_title
         write_title_file(film_title)
 
+        # ✅ Dinamik referer (URL domain'ine göre)
+        active_referer = guess_referer(target_stream_url)
+        headers_arg = build_headers_arg(active_referer)
+
         probe_url = probe_url_of(target_stream_url)
+
+        # ✅ Hızlı erişim testi (403 ise boşa uğraşmayalım)
+        print(f"🔍 Erişim testi yapılıyor: {probe_url[:90]}")
+        print(f"   Referer: {active_referer}")
+        ok, status = test_url_accessible(probe_url, active_referer)
+        if not ok:
+            print(f"🚫 URL erişilemedi (durum: {status}) → sonraki içeriğe geçiliyor")
+            current_index += 1
+            last_seconds = 0
+            last_url = ""
+            last_title = ""
+            update_local_state(current_index, 0, "", "")
+            consecutive_403_failures = 0
+            continue
+
         total_duration_sec = _duration_cache.pop(probe_url, 0.0)
         if total_duration_sec <= 0:
             total_duration_sec = get_video_duration_ffprobe(probe_url)
@@ -364,22 +448,13 @@ def start_m3u_stream():
         print(f"🎬 Oynatılan İçerik  : {film_title}")
         print(f"⏱️ Başlangıç Saniyesi: {last_seconds}")
         print(f"⏱️ Toplam Süre      : {format_hms(total_duration_sec) if total_duration_sec > 0 else 'Bilinmiyor'}")
+        print(f"🔗 Kaynak           : {target_stream_url[:100]}")
 
-        # ✅ DÜZELTME 4: Referer ve Origin tek yerden, doğru domain
-        headers_arg = (
-            f"User-Agent: {STREAM_USER_AGENT}\r\n"
-            f"Referer: {STREAM_REFERER}\r\n"
-            f"Origin: {STREAM_ORIGIN}\r\n"
-            f"Accept: */*\r\n"
-            f"Accept-Language: tr-TR,tr;q=0.9,en;q=0.8\r\n"
-            f"Connection: keep-alive\r\n"
-        )
-
-        # ✅ DÜZELTME 5: analyzeduration/probesize düşür (başlangıcı hızlandır)
         input_options = [
             '-re',
             '-headers', headers_arg,
-            '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
+            '-protocol_whitelist', 'file,http,https,tcp,tls,crypto,hls,applehttp',
+            '-allowed_extensions', 'ALL',
             '-err_detect', 'ignore_err',
             '-fflags', '+genpts+discardcorrupt',
             '-thread_queue_size', '1024',
@@ -409,7 +484,6 @@ def start_m3u_stream():
         print_dashboard(film_title, current_index, len(playlist), last_seconds, status="🟡 Başlatılıyor")
 
         has_logo1 = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
-
         title_drawtext = f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':fontcolor=white@{TEXT_OPACITY}:fontsize=26:x=70:y=h-th-70"
 
         if has_logo1:
@@ -441,10 +515,9 @@ def start_m3u_stream():
             '-f', 'mpegts', 'pipe:1'
         ]
 
-        # ✅ DÜZELTME: FFmpeg komutunu debug için yazdır (ilk çalıştırmada)
         if os.getenv("DEBUG_FFMPEG") == "1":
-            print("🐞 FFmpeg komutu:")
-            print("   " + " ".join(command[:20]) + " ...")
+            print("🐞 FFmpeg komutu (kısaltılmış):")
+            print("   " + " ".join(command[:15]) + " ...")
 
         process = subprocess.Popen(
             command,
@@ -470,7 +543,7 @@ def start_m3u_stream():
                 time.sleep(5)
                 timeout = WATCHDOG_TIMEOUT_SECONDS if started_ref[0] else WATCHDOG_STARTUP_SECONDS
                 if time.time() - progress_ref[0] > timeout:
-                    print(f"🚨 Watchdog: {timeout} saniyedir veri akışı yok! Süreç sonlandırılıyor.")
+                    print(f"🚨 Watchdog: {timeout}s veri akışı yok, sonlandırılıyor.")
                     try:
                         proc.kill()
                     except Exception:
@@ -483,10 +556,8 @@ def start_m3u_stream():
             line = process.stderr.readline()
             if not line and process.poll() is not None:
                 break
-
             if line:
                 stderr_tail.append(line.rstrip())
-                # ✅ DÜZELTME: Kritik hataları anında göster
                 low = line.lower()
                 if any(x in low for x in ['error', 'failed', 'forbidden', '404', '403', 'invalid', 'no such']):
                     print(f"🐞 ffmpeg: {line.rstrip()[:200]}")
@@ -511,7 +582,6 @@ def start_m3u_stream():
                         write_step_summary(film_title, current_index, len(playlist), current_stream_seconds)
                         last_dashboard_time = now
 
-        # ✅ DÜZELTME 6: Süreç bittiğinde FFmpeg'in son hatalarını göster
         if process.returncode != 0 and stderr_tail:
             print(f"🐞 FFmpeg çıkış kodu: {process.returncode}")
             print("🐞 Son 10 stderr satırı:")
@@ -520,6 +590,25 @@ def start_m3u_stream():
 
         finished_naturally = (process.returncode == 0) and is_really_finished(current_stream_seconds, total_duration_sec)
 
+        # ✅ 403 tespiti: hemen sonraki içeriğe geç, boşuna bekleme
+        if not finished_naturally and is_forbidden_error(stderr_tail):
+            consecutive_403_failures += 1
+            print(f"🚫 403 Forbidden tespit edildi ({consecutive_403_failures}/{MAX_403_BEFORE_SKIP})")
+            print(f"   → Kaynak sunucu bu IP/Referer'ı reddediyor. Muhtemel: IP engeli veya yanlış Referer.")
+            if consecutive_403_failures >= MAX_403_BEFORE_SKIP:
+                print(f"⏭️  {MAX_403_BEFORE_SKIP} kez üst üste 403. Sonraki içeriğe geçiliyor.")
+                current_index += 1
+                last_seconds = 0
+                last_url = ""
+                last_title = ""
+                consecutive_403_failures = 0
+                consecutive_fast_failures = 0
+                update_local_state(current_index, 0, "", "")
+            else:
+                time.sleep(5)
+            continue
+
+        # 403 değil, normal akış
         if finished_naturally:
             print("✅ İçerik gerçekten bitti, sonraki videoya geçiliyor.")
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="✅ Bitti, sıradakine geçiliyor")
@@ -529,11 +618,12 @@ def start_m3u_stream():
             last_title = ""
             update_local_state(current_index, 0, "", "")
             consecutive_fast_failures = 0
+            consecutive_403_failures = 0
         else:
             if process.returncode == 0:
-                print(f"⚠️ FFmpeg 0 kodu verdi ancak film tamamlanmadı ({format_hms(current_stream_seconds)} / {format_hms(total_duration_sec)}). Erken kopma!")
+                print(f"⚠️ FFmpeg 0 döndü ama film tamamlanmadı ({format_hms(current_stream_seconds)} / {format_hms(total_duration_sec)}). Erken kopma!")
             elif process.returncode == -9:
-                print("⚠️ FFmpeg watchdog (donma) nedeniyle sonlandırıldı.")
+                print("⚠️ FFmpeg watchdog nedeniyle sonlandırıldı.")
 
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="🔴 Bağlantı koptu, tekrar denenecek")
 
@@ -544,7 +634,7 @@ def start_m3u_stream():
                 consecutive_fast_failures = 0
 
             if consecutive_fast_failures >= 3:
-                print(f"❌ {film_title} akışı sürekli hataya düştü. Sonraki içeriğe atlanıyor...")
+                print(f"❌ {film_title} sürekli hataya düşüyor. Sonraki içeriğe atlanıyor...")
                 current_index += 1
                 last_seconds = 0
                 last_url = ""
@@ -554,10 +644,9 @@ def start_m3u_stream():
             else:
                 if consecutive_fast_failures > 1 and current_stream_seconds > SEEK_BACKOFF_SECONDS:
                     last_seconds = max(0, current_stream_seconds - SEEK_BACKOFF_SECONDS)
-                    print(f"⏪ Takılma koruması: {SEEK_BACKOFF_SECONDS}s geriye sarılarak ({last_seconds}s) tekrar denenecek.")
+                    print(f"⏪ Takılma koruması: {SEEK_BACKOFF_SECONDS}s geri ({last_seconds}s) tekrar denenecek.")
                 else:
                     last_seconds = current_stream_seconds
-
                 last_url = target_stream_url
                 update_local_state(current_index, last_seconds, last_url, film_title)
 
