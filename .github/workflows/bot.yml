@@ -93,4 +93,4 @@ jobs:
     - name: 🚀 Yayını başlat
       run: |
         echo "🎬 SSH101.com yayını başlatılıyor..."
-        python yayin.py
+        python bot.py
