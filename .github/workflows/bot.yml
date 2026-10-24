@@ -5,86 +5,58 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
-permissions:
-  actions: write
+# Çift yayın çalışmasını ve çakışmayı önleyen kural
+concurrency:
+  group: digi-stream
+  cancel-in-progress: true
 
 jobs:
   yayin:
     runs-on: ubuntu-latest
-    timeout-minutes: 355
-    
+    timeout-minutes: 360
+    permissions:
+      contents: write
+      actions: write
     steps:
     - name: 📥 Depoyu klonla
       uses: actions/checkout@v4
-    
-    - name: 🛠️ Kurulumlar (Python & FFmpeg)
+      
+    - name: 🐍 Python kurulumu
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        
+    - name: 📦 FFmpeg ve Kurulumlar
       run: |
         sudo apt-get update
-        sudo apt-get install -y ffmpeg python3
-    
-    - name: 🚀 Yayın Scriptini Oluştur ve Başlat
+        sudo apt-get install -y --no-install-recommends ffmpeg ca-certificates openssl
+        pip install requests
+
+    - name: 📥 Kayıtlı State Dosyasını İndir
+      continue-on-error: true
       run: |
-        cat > bot.py << 'EOF'
-        import subprocess
-        import sys
-        import time
+        curl -sL https://github.com/${{ github.repository }}/releases/download/state-data/state_digi.json -o state_digi.json
 
-        # ===================== AYARLAR =====================
-        RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101"
-        STREAM_KEY = "digimax2"
-        rtmp_server = f"{RTMP_URL}/{STREAM_KEY}"
+    - name: 🚀 Yayını başlat
+      env:
+        STATE_FILE_NAME: "state_digi.json"
+      run: python -u bot.py
 
-        VIDEO_URL = "http://germanyservers.life:80/live/U1T3E7Vr/g2ktb9mu/178661.m3u8"
-        LOGO_URL = "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/1792821507087.png"
-        # ===================================================
-
-        print("=" * 50)
-        print("📺 SSH101.com Yayın Başlatılıyor")
-        print("=" * 50)
-        print(f"🎬 Video: {VIDEO_URL}")
-        print(f"🔑 Stream Key: {STREAM_KEY}")
-        print("=" * 50)
-
-        command = [
-            'ffmpeg',
-            '-re',
-            '-stream_loop', '-1',
-            '-i', VIDEO_URL,
-            '-i', LOGO_URL,
-            '-filter_complex',
-            '[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black[v0];'
-            '[1:v]scale=230:90[logo];'
-            '[v0][logo]overlay=W-w-10:3[v1];'
-            '[v1]drawtext=text=:fontcolor=white:fontsize=24:box=1:boxcolor=black@0.6:boxborderw=5:x=(w-text_w)/2:y=h-text_h-20[v]',
-            '-map', '[v]',
-            '-map', '0:a?',
-            '-c:v', 'libx264',
-            '-preset', 'veryfast',
-            '-b:v', '4000k',
-            '-c:a', 'aac',
-            '-b:a', '128k',
-            '-f', 'flv',
-            rtmp_server
-        ]
-
-        try:
-            proc = subprocess.Popen(command)
-            while True:
-                time.sleep(60)
-                if proc.poll() is not None:
-                    print("⚠️ Yayın durdu, yeniden başlatılıyor...")
-                    proc = subprocess.Popen(command)
-        except KeyboardInterrupt:
-            print("\n⛔ Yayın durduruluyor...")
-            proc.terminate()
-        EOF
-
-        python bot.py
-
-    - name: 🔄 Otomatik Yeniden Başlat
+    - name: 💾 Son Durumu Release Üzerinde Güncelle
       if: always()
+      uses: softprops/action-gh-release@v1
+      with:
+        files: state_digi.json
+        tag_name: state-data
+        name: "Yayın Kaldığı Yer (State)"
+        draft: false
+        prerelease: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: 🔁 Süre Doldu veya İptal Edildi, Yeni Run'ı Tetikle
+      if: always()
+      env:
+        GH_TOKEN: ${{ secrets.GH_TOKEN }}
       run: |
-        echo "🔄 Süre doldu, yeni yayın döngüsü başlatılıyor..."
-        gh workflow run digi
+        gh workflow run "${{ github.workflow }}" --repo "${{ github.repository }}" --ref main
