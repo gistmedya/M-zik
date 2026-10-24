@@ -25,29 +25,27 @@ GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
 
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 STREAM_REFERER = "https://vidmody.com/"
-# Tarayıcıda açarken gereken Cookie varsa buraya ekleyebilirsin (Örn: "PHPSESSID=xxx; security_token=yyy")
 STREAM_COOKIE = os.getenv("STREAM_COOKIE", "")
 
-# Logo ve yazı opaklık ayarları (0.0 - 1.0 arası)
+# Logo and text opacity settings (0.0 - 1.0)
 LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "1.0"))
 TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "0.0"))
 BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
-# Decoder'ı tek thread'e zorlamak için
+# Decoder threads
 DECODER_THREADS = os.getenv("DECODER_THREADS", "1")
 
-# Watchdog Zaman Aşımları (Saniye)
-WATCHDOG_STARTUP_SECONDS = int(os.getenv("WATCHDOG_STARTUP_SECONDS", "60"))  # İlk açılış toleransı
-WATCHDOG_TIMEOUT_SECONDS = int(os.getenv("WATCHDOG_TIMEOUT_SECONDS", "45"))  # Yayın ortası donma toleransı
+# Watchdog Timeouts (Seconds)
+WATCHDOG_STARTUP_SECONDS = int(os.getenv("WATCHDOG_STARTUP_SECONDS", "60"))
+WATCHDOG_TIMEOUT_SECONDS = int(os.getenv("WATCHDOG_TIMEOUT_SECONDS", "45"))
 
-# Tolerans ve Geri Sarma Ayarları
-END_TOLERANCE_SECONDS = 15  # Bitişe bu kadar saniye kaldıysa film gerçekten bitmiş sayılır
-SEEK_BACKOFF_SECONDS = 10   # Sürekli çöken noktada kaç saniye geriye sarılacak
+# Tolerance and Rewind Settings
+END_TOLERANCE_SECONDS = 15
+SEEK_BACKOFF_SECONDS = 10
 LINK_CHANGE_REWIND_SECONDS = int(os.getenv("LINK_CHANGE_REWIND_SECONDS", "15"))
 
 
 def format_hms(total_seconds):
-    """Saniyeyi SS:DD:SS formatına çevirir."""
     total_seconds = max(0, int(total_seconds))
     hrs = total_seconds // 3600
     mins = (total_seconds % 3600) // 60
@@ -57,11 +55,6 @@ def format_hms(total_seconds):
 
 # ===================== KALICI RTMP YAYINCISI =====================
 class RtmpPublisher:
-    """
-    RTMP sunucusuna SÜREKLİ bağlı kalan tek bir FFmpeg süreci.
-    Filmleri kodlayan FFmpeg süreçleri çıktılarını (MPEG-TS) bu sürecin stdin'ine yazar.
-    """
-
     def __init__(self):
         self.proc = None
         self.started_at = 0.0
@@ -139,13 +132,13 @@ def prefetch_duration(stream_url):
 
 
 def get_video_duration_ffprobe(video_url):
-    """FFprobe ile videonun GERÇEK toplam süresini çeker."""
     cookie_header = f"Cookie: {STREAM_COOKIE}\r\n" if STREAM_COOKIE else ""
     headers_str = f"User-Agent: {STREAM_USER_AGENT}\r\nReferer: {STREAM_REFERER}\r\n{cookie_header}"
     
     cmd = [
         'ffprobe',
         '-v', 'error',
+        '-tls_verify', '0',
         '-show_entries', 'format=duration',
         '-of', 'default=noprint_wrappers=1:nokey=1',
         '-headers', headers_str,
@@ -171,7 +164,6 @@ def is_really_finished(current_sec, total_sec):
 
 
 def get_local_state():
-    """Yerel state dosyasından son durumu okur."""
     if os.path.exists(STATE_FILE_NAME):
         if os.path.getsize(STATE_FILE_NAME) == 0:
             return 0, "", ""
@@ -189,7 +181,6 @@ def get_local_state():
 
 
 def update_local_state(seconds, url="", title=""):
-    """Atomik yazım mantığıyla son konumu kaydeder."""
     tmp_file = f"{STATE_FILE_NAME}.tmp"
     try:
         data = {
@@ -328,6 +319,7 @@ def start_m3u8_stream():
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-err_detect', 'ignore_err',
             '-fflags', '+genpts+discardcorrupt',
+            '-tls_verify', '0',               # <-- SSL sertifika/güvenlik uyarısını bypass eder
             '-thread_queue_size', '1024',
             '-max_interleave_delta', '0',
             '-analyzeduration', '10000000',
