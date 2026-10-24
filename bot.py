@@ -1,15 +1,18 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import subprocess
 import sys
 import time
+import os
 
-# ===================== SSH101.com AYARLARI =====================
+# ===================== AYARLAR =====================
 RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101"
-STREAM_KEY = "digimax2"
+STREAM_KEY = os.getenv("STREAM_KEY") or "digimax2"
 rtmp_server = f"{RTMP_URL}/{STREAM_KEY}"
 
-# ===================== YAYIN AYARLARI =====================
-VIDEO_URL = "http://germanyservers.life:80/live/U1T3E7Vr/g2ktb9mu/178661.m3u8"
-LOGO_URL = "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/1792821507087.png"
+VIDEO_URL = os.getenv("M3U8_URL") or "http://germanyservers.life:80/live/U1T3E7Vr/g2ktb9mu/178661.m3u8"
+LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/1792821507087.png"
 
 print("=" * 50)
 print("📺 SSH101.com Yayın Başlatılıyor")
@@ -22,9 +25,11 @@ print(f"🌐 İzleme: https://ssh101.com/live/{STREAM_KEY}")
 print(f"📱 HLS: https://lbgo.bozztv.com/ssh101/ssh101/{STREAM_KEY}/playlist.m3u8")
 print("=" * 50)
 
-# FFmpeg komutu - 1080p 25 FPS & 3500 kbps Bitrate (KMPS)
+# FFmpeg komutu - 1080p 25 FPS & 3500 kbps Bitrate
 command = [
     'ffmpeg',
+    '-hide_banner',
+    '-loglevel', 'info',
     '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     '-rw_timeout', '15000000',
     '-thread_queue_size', '1024',
@@ -37,7 +42,7 @@ command = [
     '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black[v0];'
     '[1:v]scale=-1:99[logo];'
     '[v0][logo]overlay=W-w-38:25[v1];'
-    '[v1]drawtext=text=:fontcolor=white:fontsize=28:box=1:boxcolor=black@0.6:boxborderw=5:x=(w-text_w)/2:y=h-text_h-20[v]',
+    '[v1]drawtext=text=\'t.me/digitaltivi\':fontcolor=white:fontsize=28:box=1:boxcolor=black@0.6:boxborderw=5:x=(w-text_w)/2:y=h-text_h-20[v]',
     '-map', '[v]',
     '-map', '0:a?',
     '-c:v', 'libx264',
@@ -54,19 +59,19 @@ command = [
 
 print("\n🎥 SSH101.com yayını başlatılıyor...")
 print("📐 Çözünürlük: 1080p (1920x1080) @ 25 FPS")
-print("⚡ Bitrate (KMPS): 3500 kbps")
-print("🖼️  Logo: Sağ üst")
+print("⚡ Bitrate: 3500 kbps")
+print("🖼️ Logo: Sağ üst")
 print("📝 Alt yazı: t.me/digitaltivi")
-print("⏸️  Durdurmak için: Ctrl + C\n")
+print("⏸️ Durdurmak için: Ctrl + C\n")
 
 try:
     proc = subprocess.Popen(command)
     
-    # Yayını canlı tut
+    # Yayını canlı tut ve düştüğünde otomatik yeniden başlat
     while True:
-        time.sleep(60)
+        time.sleep(10)
         if proc.poll() is not None:
-            print("⚠️ Yayın durdu, yeniden başlatılıyor...")
+            print("⚠️ Yayın akışı durdu, yeniden başlatılıyor...")
             proc = subprocess.Popen(command)
             
 except KeyboardInterrupt:
