@@ -20,11 +20,13 @@ RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 M3U8_URL = os.getenv("M3U8_URL") or "http://germanyservers.life:80/live/U1T3E7Vr/g2ktb9mu/178661.m3u8"
 LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/1792821507087.png"
 
-STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", ".json")
+STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "state_.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
 
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 STREAM_REFERER = "https://vidmody.com/"
+# Tarayıcıda açarken gereken Cookie varsa buraya ekleyebilirsin (Örn: "PHPSESSID=xxx; security_token=yyy")
+STREAM_COOKIE = os.getenv("STREAM_COOKIE", "")
 
 # Logo ve yazı opaklık ayarları (0.0 - 1.0 arası)
 LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "1.0"))
@@ -138,32 +140,33 @@ def prefetch_duration(stream_url):
 
 def get_video_duration_ffprobe(video_url):
     """FFprobe ile videonun GERÇEK toplam süresini çeker."""
+    cookie_header = f"Cookie: {STREAM_COOKIE}\r\n" if STREAM_COOKIE else ""
+    headers_str = f"User-Agent: {STREAM_USER_AGENT}\r\nReferer: {STREAM_REFERER}\r\n{cookie_header}"
+    
     cmd = [
         'ffprobe',
         '-v', 'error',
         '-show_entries', 'format=duration',
         '-of', 'default=noprint_wrappers=1:nokey=1',
-        '-headers', f"User-Agent: {STREAM_USER_AGENT}\r\nReferer: {STREAM_REFERER}\r\n",
+        '-headers', headers_str,
         video_url
     ]
     try:
         output = subprocess.check_output(cmd, stderr=subprocess.STDOUT, timeout=12).decode('utf-8', 'replace').strip()
-        duration = float(output.splitlines()[-1].strip())
-        if duration > 0:
-            print(f"⏱️ ffprobe ile toplam süre tespit edildi: {duration:.1f} saniye ({format_hms(duration)})")
-            return duration
+        lines = [line.strip() for line in output.splitlines() if line.strip()]
+        if lines:
+            duration = float(lines[-1])
+            if duration > 0:
+                print(f"⏱️ ffprobe ile toplam süre tespit edildi: {duration:.1f} saniye ({format_hms(duration)})")
+                return duration
     except Exception as e:
         print(f"⚠️ ffprobe ile süre okunamadı: {e}")
     return 0.0
 
 
 def is_really_finished(current_sec, total_sec):
-    """
-    Sadece FFmpeg'in 0 vermesine güvenmez.
-    İzlenen sürenin toplam süreye ulaşıp ulaşmadığını kontrol eder (Sahte Bitiş Koruması).
-    """
     if total_sec <= 0:
-        return True  # Toplam süre bilinmiyorsa FFmpeg'in 0 çıkışına güvenmek zorundayız.
+        return True
     return (total_sec - current_sec) <= END_TOLERANCE_SECONDS
 
 
@@ -171,7 +174,7 @@ def get_local_state():
     """Yerel state dosyasından son durumu okur."""
     if os.path.exists(STATE_FILE_NAME):
         if os.path.getsize(STATE_FILE_NAME) == 0:
-            return 0, 0, "", ""
+            return 0, "", ""
         try:
             with open(STATE_FILE_NAME, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -223,14 +226,11 @@ def write_title_file(title):
 
 
 def derive_title_from_url(url):
-    """M3U8 URL'sinden okunabilir bir başlık türetir."""
     try:
         path = url.split("?")[0].rstrip("/")
         name = os.path.basename(path)
         if name:
-            # .m3u8 veya .m3u uzantısını temizle
             name = re.sub(r'\.(m3u8?|ts)$', '', name, flags=re.IGNORECASE)
-            # Alt çizgi ve tireleri boşluğa çevir
             name = name.replace('_', ' ').replace('-', ' ').strip()
             if name:
                 return name
@@ -271,7 +271,6 @@ def start_m3u8_stream():
 
     if not M3U8_URL:
         print("❌ M3U8_URL ortam değişkeni tanımlanmamış!")
-        print("   Kullanım: M3U8_URL='https://ornek.com/yayin.m3u8' python3 script.py")
         sys.exit(1)
 
     print(f"🔧 Kullanılan M3U8  : {M3U8_URL}")
@@ -281,10 +280,8 @@ def start_m3u8_stream():
 
     download_logo()
 
-    # Tek bir yayın URL'si olduğu için state'ten sadece saniye/url/title okunur
     last_seconds, last_url, last_title = get_local_state()
 
-    # URL değişmişse sıfırdan başla
     if last_url and last_url != M3U8_URL:
         print("🔄 URL değişmiş, sıfırdan başlanacak.")
         last_seconds = 0
@@ -299,7 +296,6 @@ def start_m3u8_stream():
     while True:
         target_stream_url = M3U8_URL
 
-        # Link Değişikliği / Süre Rewind Kontrolü
         if last_seconds > 0 and last_url and target_stream_url != last_url:
             if last_title and film_title == last_title:
                 old_seconds = last_seconds
@@ -323,7 +319,8 @@ def start_m3u8_stream():
         print(f"⏱️ Başlangıç Saniyesi: {last_seconds}")
         print(f"⏱️ Toplam Süre      : {format_hms(total_duration_sec) if total_duration_sec > 0 else 'Bilinmiyor'}")
 
-        headers_arg = f"User-Agent: {STREAM_USER_AGENT}\r\nReferer: https://vidmody.com/\r\nOrigin: https://vidmody.com\r\n"
+        cookie_header = f"Cookie: {STREAM_COOKIE}\r\n" if STREAM_COOKIE else ""
+        headers_arg = f"User-Agent: {STREAM_USER_AGENT}\r\nReferer: {STREAM_REFERER}\r\nOrigin: https://vidmody.com\r\n{cookie_header}"
 
         input_options = [
             '-re',
@@ -358,13 +355,10 @@ def start_m3u8_stream():
         print_dashboard(film_title, last_seconds, status="🟡 Başlatılıyor")
 
         has_logo1 = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
-
-        # Film adı sol altta olacak şekilde ayarlandı
         title_drawtext = f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':fontcolor=white@{TEXT_OPACITY}:fontsize=26:x=70:y=h-th-70"
 
         if has_logo1:
             logo_inputs = ['-i', 'logo.png']
-            # Logo sağ üst köşede olacak (overlay=W-w-50:50)
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
                 f'[{logo1_input_index}:v]scale=-2:83,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
@@ -404,7 +398,6 @@ def start_m3u8_stream():
         current_stream_seconds = last_seconds
         stderr_tail = deque(maxlen=40)
 
-        # WATCHDOG Mantığı (Başlangıç ve Normal Yayın Toleranslı)
         last_progress_time = [time.time()]
         has_started_progress = [False]
 
@@ -450,7 +443,6 @@ def start_m3u8_stream():
                         write_step_summary(film_title, current_stream_seconds)
                         last_dashboard_time = now
 
-        # ===================== GELİŞMİŞ BİTİŞ VE KOPMA KONTROLÜ =====================
         finished_naturally = (process.returncode == 0) and is_really_finished(current_stream_seconds, total_duration_sec)
 
         if finished_naturally:
@@ -462,7 +454,6 @@ def start_m3u8_stream():
             update_local_state(0, "", "")
             consecutive_fast_failures = 0
         else:
-            # Erken kapanma veya kopma durumu
             if process.returncode == 0:
                 print(f"⚠️ FFmpeg 0 kodu verdi ancak yayın tamamlanmadı ({format_hms(current_stream_seconds)} / {format_hms(total_duration_sec)}). Erken kopma sayıldı!")
             elif process.returncode == -9:
@@ -476,7 +467,6 @@ def start_m3u8_stream():
             else:
                 consecutive_fast_failures = 0
 
-            # 3 Kez üst üste hızlı çökme yaşanırsa baştan başlat
             if consecutive_fast_failures >= 3:
                 print(f"❌ {film_title} akışı sürekli hataya düştü. Baştan başlatılıyor...")
                 last_seconds = 0
@@ -485,7 +475,6 @@ def start_m3u8_stream():
                 consecutive_fast_failures = 0
                 update_local_state(0, "", "")
             else:
-                # SEEK BACKOFF: Eğer sürekli aynı noktada çöküyorsa bozuk kareyi (corrupt frame) atlamak için biraz geri sar
                 if consecutive_fast_failures > 1 and current_stream_seconds > SEEK_BACKOFF_SECONDS:
                     last_seconds = max(0, current_stream_seconds - SEEK_BACKOFF_SECONDS)
                     print(f"⏪ Takılma koruması: {SEEK_BACKOFF_SECONDS} saniye geriye sarılarak ({last_seconds}s) tekrar denenecek.")
@@ -500,7 +489,6 @@ def start_m3u8_stream():
             print(f"⚠️ {retry_delay} saniye sonra tekrar bağlanılıyor...")
             time.sleep(retry_delay)
 
-        # Sonraki döngü için başlığı yeniden belirle (URL değişmediği için aynı kalır)
         film_title = derive_title_from_url(M3U8_URL)
 
 
