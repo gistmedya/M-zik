@@ -17,7 +17,7 @@ STREAM_KEY = os.getenv("STREAM_KEY") or "seriesone@"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
 # M3U8 URL (ortam değişkeni veya varsayılan)
-M3U8_URL = os.getenv("M3U8_URL") or "https://v2.catcast.tv/content/50736/seg-34816-v1-a1/index.m3u8"
+M3U8_URL = os.getenv("M3U8_URL") or "https://v2.catcast.tv/content/50736/seg-50727-v1-a1/index.m3u8"
 LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/1792794197378.png"
 
 STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", ".json")
