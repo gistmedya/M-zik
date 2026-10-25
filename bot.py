@@ -55,6 +55,10 @@ REFERER_MAP = {
     "mediafire.com": "https://www.mediafire.com/",
     "harborcdn.lol": "https://vidmody.com/",
     "harborstream.lol": "https://vidmody.com/",
+    # ✅ YENİ: godrive / playturka zinciri
+    "playturka.space": "https://godrive.erikkalinina1994.workers.dev/",
+    "workers.dev": "https://godrive.erikkalinina1994.workers.dev/",
+    "godrive": "https://godrive.erikkalinina1994.workers.dev/",
 }
 
 # ===================== AKTİF PROXY =====================
@@ -242,6 +246,50 @@ def get_proxy():
     return _working_proxy.get("url")
 
 
+# ===================== ✅ YENİ: REDIRECT ÇÖZÜMLEYİCİ =====================
+def resolve_real_stream_url(url, referer=None):
+    """
+    godrive...workers.dev gibi redirect yapan URL'leri gerçek stream URL'sine çevirir.
+    Örn: godrive...workers.dev/v/12911?q=1080 → p.playturka.space/videos/.../playlist.m3u8
+    """
+    try:
+        headers = {"User-Agent": STREAM_USER_AGENT}
+        if referer:
+            headers["Referer"] = referer
+            headers["Origin"] = referer.rstrip('/')
+
+        # HEAD ile redirect zincirini takip et
+        r = requests.head(url, headers=headers, timeout=15, allow_redirects=True)
+        real_url = r.url
+        ct = r.headers.get("Content-Type", "").lower()
+
+        # HEAD HTML döndüyse veya redirect çalışmadıysa GET ile dene
+        if "html" in ct or "text" in ct or real_url == url:
+            try:
+                r2 = requests.get(url, headers=headers, timeout=15, allow_redirects=True, stream=True)
+                real_url = r2.url
+                # Eğer hala aynı URL ise ve içerik HTML ise, içinden m3u8 linki çıkarmayı dene
+                if real_url == url and "html" in r2.headers.get("Content-Type", "").lower():
+                    body = r2.raw.read(50000, decode_content=True).decode('utf-8', 'replace')
+                    m = re.search(r'(https?://[^\s"\'<>]+\.m3u8[^\s"\'<>]*)', body)
+                    if m:
+                        real_url = m.group(1)
+                        print(f"🔍 HTML içinden m3u8 bulundu: {real_url[:90]}")
+                r2.close()
+            except Exception as e:
+                print(f"⚠️ GET redirect hatası: {e}")
+
+        if real_url != url:
+            print(f"🔀 Redirect çözüldü:")
+            print(f"   Eski: {url[:90]}")
+            print(f"   Yeni: {real_url[:90]}")
+            return real_url
+        return url
+    except Exception as e:
+        print(f"⚠️ Redirect çözümleme hatası: {e}")
+        return url
+
+
 # ===================== KALICI RTMP YAYINCISI =====================
 class RtmpPublisher:
     def __init__(self):
@@ -315,7 +363,9 @@ def probe_url_of(stream_url):
 
 def prefetch_duration(stream_url):
     url = probe_url_of(stream_url)
-    d = get_video_duration_ffprobe(url)
+    # ✅ Redirect çöz
+    real = resolve_real_stream_url(url, guess_referer(url))
+    d = get_video_duration_ffprobe(real)
     if d > 0:
         _duration_cache[url] = d
 
@@ -480,32 +530,21 @@ def is_valid_stream_url(url):
 
 
 # =====================================================================
-# ✅ YENİ FONKSİYON: Film adı + link değişikliğine göre başlangıç saniyesi
-# Kural:
-#   - Film adı AYNI + Link DEĞİŞTİ  → kaldığı yerden DEVAM (küçük rewind ile)
-#   - Film adı DEĞİŞTİ              → BAŞTAN başlat (0)
-#   - Film adı AYNI + Link AYNI     → kaldığı yerden DEVAM
+# ✅ Film adı + link değişikliğine göre başlangıç saniyesi
 # =====================================================================
 def resolve_start_seconds(current_title, current_url, last_seconds, last_url, last_title):
-    """
-    Döndürür: (yeni_baslangic_saniyesi, aciklama_mesaji)
-    """
-    # İlk çalıştırma veya hiç geçmiş yok
     if not last_title:
         return 0, "🆕 İlk içerik, baştan başlanıyor"
 
-    # ✅ DURUM 1: Film adı değişti → BAŞTAN
     if current_title != last_title:
         return 0, f"🎬 Film değişti ('{last_title}' → '{current_title}'), baştan başlanıyor"
 
-    # ✅ DURUM 2: Film adı aynı + link değişti → DEVAM (küçük rewind)
     if current_url != last_url:
         if last_seconds > 0:
             new_seconds = max(0, last_seconds - LINK_CHANGE_REWIND_SECONDS)
             return new_seconds, f"🔄 Film aynı, link değişti → {last_seconds}s'den {new_seconds}s'ye devam (rewind: {LINK_CHANGE_REWIND_SECONDS}s)"
         return 0, "🔄 Film aynı, link değişti ama geçmiş saniye yok, baştan"
 
-    # ✅ DURUM 3: Film adı aynı + link aynı → DEVAM
     return last_seconds, f"▶️ Film ve link aynı, {last_seconds}s'den devam ediliyor"
 
 
@@ -558,7 +597,7 @@ def start_m3u_stream():
             continue
 
         # =====================================================================
-        # ✅ FİLM ADI / LİNK DEĞİŞİKLİK MANTIĞI (yeni fonksiyonla)
+        # Film adı / link değişiklik mantığı
         # =====================================================================
         last_seconds, reason = resolve_start_seconds(
             current_title=title,
@@ -573,25 +612,34 @@ def start_m3u_stream():
         last_title = title
         write_title_file(title)
 
-        referer = guess_referer(target_url)
+        # ✅ YENİ: Redirect çöz (godrive → playturka gibi)
+        active_referer = guess_referer(target_url)
+        real_url = resolve_real_stream_url(target_url, active_referer)
+        effective_url = real_url if real_url else target_url
+
+        # Gerçek URL'ye göre referer'ı yeniden seç
+        referer = guess_referer(effective_url)
         headers_arg = build_headers_arg(referer)
-        probe_url = probe_url_of(target_url)
+        probe_url = probe_url_of(effective_url)
         proxy = get_proxy()
 
         print("=" * 60)
         print(f"🎬 {title}")
-        print(f"🔗 {target_url[:110]}")
+        print(f"🔗 Kaynak: {target_url[:110]}")
+        if real_url != target_url:
+            print(f"🔀 Gerçek: {real_url[:110]}")
         print(f"🌐 Proxy: {proxy or 'YOK'} | Referer: {referer}")
 
         total_dur = _duration_cache.pop(probe_url, 0.0)
         if total_dur <= 0:
-            total_dur = get_video_duration_ffprobe(probe_url)
+            total_dur = get_video_duration_ffprobe(effective_url)
 
+        # ✅ DÜZELTME: '-allowed_extensions' yerine '-extension_picky 0'
         input_options = [
             '-re',
             '-headers', headers_arg,
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto,hls,applehttp',
-            '-allowed_extensions', 'ALL',
+            '-extension_picky', '0',
             '-err_detect', 'ignore_err',
             '-fflags', '+genpts+discardcorrupt',
             '-thread_queue_size', '1024',
@@ -611,13 +659,13 @@ def start_m3u_stream():
 
         seek_args = ['-ss', str(last_seconds)] if last_seconds > 0 else []
 
-        if ";" in target_url:
-            v_url, a_url = target_url.split(";", 1)
+        if ";" in effective_url:
+            v_url, a_url = effective_url.split(";", 1)
             input_args = input_options + seek_args + ['-i', v_url.strip()] + input_options + seek_args + ['-i', a_url.strip()]
             audio_map = ['-map', '1:a:0?']
             logo_idx = 2
         else:
-            input_args = input_options + seek_args + ['-i', target_url]
+            input_args = input_options + seek_args + ['-i', effective_url]
             audio_map = ['-map', '0:a:0?']
             logo_idx = 1
 
