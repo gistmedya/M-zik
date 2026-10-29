@@ -30,6 +30,11 @@ LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "1.0"))
 TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "0.0"))
 BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
+# Alt bant (kırmızı şerit) ayarları
+BANNER_TEXT = "DİGİMAX VE DİGİMAX PLUS KANALLARI KAPANACAKTIR. BİZİ İZLEDİĞİNİZ İÇİN TEŞEKKÜR EDERİZ."
+BANNER_HEIGHT = 70
+BANNER_FONTSIZE = 26
+
 # Decoder'ı tek thread'e zorlamak için
 DECODER_THREADS = os.getenv("DECODER_THREADS", "1")
 
@@ -248,6 +253,14 @@ def write_title_file(title):
         print(f"⚠️ Başlık dosyası yazma hatası: {e}")
 
 
+def write_banner_file():
+    try:
+        with open('banner.txt', 'w', encoding='utf-8') as f:
+            f.write(BANNER_TEXT)
+    except Exception as e:
+        print(f"⚠️ Alt bant dosyası yazma hatası: {e}")
+
+
 def print_dashboard(title, index, playlist_len, seconds, status="🟢 Yayında"):
     print("┌" + "─" * 58 + "┐")
     print(f"│ 🎬 İçerik         : {title[:36]:<36} │")
@@ -284,6 +297,7 @@ def start_m3u_stream():
     print(f"🔧 RTMP hedefi      : {RTMP_SERVER}")
 
     download_logo()
+    write_banner_file()
     current_index, last_seconds, last_url, last_title = get_local_state()
 
     consecutive_fast_failures = 0
@@ -365,7 +379,19 @@ def start_m3u_stream():
         print_dashboard(film_title, current_index, len(playlist), last_seconds, status="🟡 Başlatılıyor")
 
         has_logo1 = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
-        title_drawtext = f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':fontcolor=white@{TEXT_OPACITY}:fontsize=19:x=w-tw-20:y=h-th-20"
+
+        # Film başlığı (alt bandın üstünde kalacak şekilde yukarı alındı)
+        title_drawtext = (
+            f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
+            f"fontcolor=white@{TEXT_OPACITY}:fontsize=19:x=w-tw-20:y=h-th-{BANNER_HEIGHT + 20}"
+        )
+
+        # Kırmızı alt bant + üzerindeki yazı
+        banner_filter = (
+            f"drawbox=x=0:y=ih-{BANNER_HEIGHT}:w=iw:h={BANNER_HEIGHT}:color=red@0.95:t=fill,"
+            f"drawtext=textfile='banner.txt':fontfile='{BOLD_FONT_PATH}':fontcolor=white:"
+            f"fontsize={BANNER_FONTSIZE}:x=(w-tw)/2:y=h-{BANNER_HEIGHT}+({BANNER_HEIGHT}-th)/2"
+        )
 
         if has_logo1:
             logo_inputs = ['-i', 'logo.png']
@@ -373,13 +399,14 @@ def start_m3u_stream():
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
                 f'[{logo1_input_index}:v]scale=-2:83,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
                 '[main][logo1]overlay=W-w-70:70[tmp1];'
-                f'[tmp1]{title_drawtext}[v]'
+                f'[tmp1]{title_drawtext}[tmp2];'
+                f'[tmp2]{banner_filter}[v]'
             )
         else:
             logo_inputs = []
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
-                f'[main]{title_drawtext}[v]'
+                f'[main]{title_drawtext},{banner_filter}[v]'
             )
 
         publisher.ensure_running()
