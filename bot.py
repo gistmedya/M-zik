@@ -34,6 +34,7 @@ BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/D
 BANNER_TEXT = "DİGİMAX VE DİGİMAX PLUS KANALLARI KAPANACAKTIR. BİZİ İZLEDİĞİNİZ İÇİN TEŞEKKÜR EDERİZ."
 BANNER_HEIGHT = 70
 BANNER_FONTSIZE = 26
+BANNER_SCROLL_SPEED = int(os.getenv("BANNER_SCROLL_SPEED", "110"))  # piksel/saniye (büyüdükçe hızlanır)
 
 # Decoder'ı tek thread'e zorlamak için
 DECODER_THREADS = os.getenv("DECODER_THREADS", "1")
@@ -390,7 +391,7 @@ def start_m3u_stream():
         banner_filter = (
             f"drawbox=x=0:y=ih-{BANNER_HEIGHT}:w=iw:h={BANNER_HEIGHT}:color=red@0.95:t=fill,"
             f"drawtext=textfile='banner.txt':fontfile='{BOLD_FONT_PATH}':fontcolor=white:"
-            f"fontsize={BANNER_FONTSIZE}:x=(w-tw)/2:y=h-{BANNER_HEIGHT}+({BANNER_HEIGHT}-th)/2"
+            f"fontsize={BANNER_FONTSIZE}:x='w-mod(t*{BANNER_SCROLL_SPEED},w+tw)':y=h-{BANNER_HEIGHT}+({BANNER_HEIGHT}-th)/2"
         )
 
         if has_logo1:
