@@ -17,7 +17,7 @@ STREAM_KEY = os.getenv("STREAM_KEY") or "digimax2"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
 M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/deneme.m3u"
-LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/1792821507087.png"
+LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/1792794197378.png"
 
 STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "digi.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
@@ -33,8 +33,10 @@ BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/D
 # Alt bant (kırmızı şerit) ayarları
 BANNER_TEXT = "DİGİMAX VE DİGİMAX PLUS KANALLARI KAPANACAKTIR. BİZİ İZLEDİĞİNİZ İÇİN TEŞEKKÜR EDERİZ."
 BANNER_HEIGHT = 70
-BANNER_FONTSIZE = 26
-BANNER_SCROLL_SPEED = int(os.getenv("BANNER_SCROLL_SPEED", "110"))  # piksel/saniye (büyüdükçe hızlanır)
+BANNER_FONTSIZE = 30
+BANNER_OPACITY = float(os.getenv("BANNER_OPACITY", "0.0"))  # şerit opaklığı (0.0 - 1.0)
+BANNER_TEXT_OPACITY = float(os.getenv("BANNER_TEXT_OPACITY", "0.0"))  # yazı opaklığı (0.0 - 1.0)
+BANNER_SCROLL_SPEED = int(os.getenv("BANNER_SCROLL_SPEED", "150"))  # piksel/saniye (büyüdükçe hızlanır)
 
 # Decoder'ı tek thread'e zorlamak için
 DECODER_THREADS = os.getenv("DECODER_THREADS", "1")
@@ -389,8 +391,8 @@ def start_m3u_stream():
 
         # Kırmızı alt bant + üzerindeki yazı
         banner_filter = (
-            f"drawbox=x=0:y=ih-{BANNER_HEIGHT}:w=iw:h={BANNER_HEIGHT}:color=red@0.95:t=fill,"
-            f"drawtext=textfile='banner.txt':fontfile='{BOLD_FONT_PATH}':fontcolor=white:"
+            f"drawbox=x=0:y=ih-{BANNER_HEIGHT}:w=iw:h={BANNER_HEIGHT}:color=red@{BANNER_OPACITY}:t=fill,"
+            f"drawtext=textfile='banner.txt':fontfile='{BOLD_FONT_PATH}':fontcolor=white@{BANNER_TEXT_OPACITY}:"
             f"fontsize={BANNER_FONTSIZE}:x='w-mod(t*{BANNER_SCROLL_SPEED},w+tw)':y=h-{BANNER_HEIGHT}+({BANNER_HEIGHT}-th)/2"
         )
 
