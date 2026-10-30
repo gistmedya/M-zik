@@ -47,8 +47,8 @@ BANNER_SCROLL_SPEED = int(os.getenv("BANNER_SCROLL_SPEED", "150"))  # piksel/san
 #   Sağ alt : TITLE_X="w-tw-20"      TITLE_Y="h-th-90"
 #   Ortada  : TITLE_X="(w-tw)/2"     TITLE_Y="(h-th)/2"
 TITLE_FONTSIZE = int(os.getenv("TITLE_FONTSIZE", "23"))
-TITLE_X = os.getenv("TITLE_X", "w-tw-60")
-TITLE_Y = os.getenv("TITLE_Y", f"h-th-{BANNER_HEIGHT + 60}")
+TITLE_X = os.getenv("TITLE_X", "w-tw-20")
+TITLE_Y = os.getenv("TITLE_Y", f"h-th-{BANNER_HEIGHT + 20}")
 
 # Decoder'ı tek thread'e zorlamak için
 DECODER_THREADS = os.getenv("DECODER_THREADS", "1")
