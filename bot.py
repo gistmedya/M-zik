@@ -27,7 +27,7 @@ STREAM_REFERER = "https://vidmody.com/"
 
 # Logo ve yazı opaklık ayarları (0.0 - 1.0 arası)
 LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "1.0"))
-TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "0.0"))
+TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "1.0"))
 BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
 # Alt bant (kırmızı şerit) ayarları
@@ -37,6 +37,18 @@ BANNER_FONTSIZE = 30
 BANNER_OPACITY = float(os.getenv("BANNER_OPACITY", "0.0"))  # şerit opaklığı (0.0 - 1.0)
 BANNER_TEXT_OPACITY = float(os.getenv("BANNER_TEXT_OPACITY", "0.0"))  # yazı opaklığı (0.0 - 1.0)
 BANNER_SCROLL_SPEED = int(os.getenv("BANNER_SCROLL_SPEED", "150"))  # piksel/saniye (büyüdükçe hızlanır)
+
+# Film adı yazısı: boyut ve konum
+# x: soldan, y: yukarıdan; w/h = ekran boyutu, tw/th = yazının kendi boyutu
+# Örnek konumlar:
+#   Sağ üst : TITLE_X="w-tw-20"      TITLE_Y="20"
+#   Sol üst : TITLE_X="20"           TITLE_Y="20"
+#   Sol alt : TITLE_X="20"           TITLE_Y="h-th-90"
+#   Sağ alt : TITLE_X="w-tw-20"      TITLE_Y="h-th-90"
+#   Ortada  : TITLE_X="(w-tw)/2"     TITLE_Y="(h-th)/2"
+TITLE_FONTSIZE = int(os.getenv("TITLE_FONTSIZE", "23"))
+TITLE_X = os.getenv("TITLE_X", "w-tw-60")
+TITLE_Y = os.getenv("TITLE_Y", f"h-th-{BANNER_HEIGHT + 60}")
 
 # Decoder'ı tek thread'e zorlamak için
 DECODER_THREADS = os.getenv("DECODER_THREADS", "1")
@@ -383,13 +395,13 @@ def start_m3u_stream():
 
         has_logo1 = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
 
-        # Film başlığı (alt bandın üstünde kalacak şekilde yukarı alındı)
+        # Film başlığı (konum TITLE_X / TITLE_Y ile ayarlanır)
         title_drawtext = (
             f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
-            f"fontcolor=white@{TEXT_OPACITY}:fontsize=19:x=w-tw-20:y=h-th-{BANNER_HEIGHT + 20}"
+            f"fontcolor=white@{TEXT_OPACITY}:fontsize={TITLE_FONTSIZE}:x={TITLE_X}:y={TITLE_Y}"
         )
 
-        # Kırmızı alt bant + üzerindeki yazı
+        # Kırmızı alt bant + üzerindeki kayan yazı
         banner_filter = (
             f"drawbox=x=0:y=ih-{BANNER_HEIGHT}:w=iw:h={BANNER_HEIGHT}:color=red@{BANNER_OPACITY}:t=fill,"
             f"drawtext=textfile='banner.txt':fontfile='{BOLD_FONT_PATH}':fontcolor=white@{BANNER_TEXT_OPACITY}:"
