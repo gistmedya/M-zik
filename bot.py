@@ -400,8 +400,8 @@ def start_m3u_stream():
             logo_inputs = ['-i', 'logo.png']
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
-                f'[{logo1_input_index}:v]scale=-2:111,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
-                '[main][logo1]overlay=W-w-46:49[tmp1];'
+                f'[{logo1_input_index}:v]scale=-2:120,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
+                '[main][logo1]overlay=W-w-30:45[tmp1];'
                 f'[tmp1]{title_drawtext}[tmp2];'
                 f'[tmp2]{banner_filter}[v]'
             )
