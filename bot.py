@@ -17,7 +17,7 @@ STREAM_KEY = os.getenv("STREAM_KEY") or "digimax2"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
 M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/deneme.m3u"
-LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/1793399140743.png"
+LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/1793401050940.png"
 
 STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "digi.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
@@ -400,8 +400,8 @@ def start_m3u_stream():
             logo_inputs = ['-i', 'logo.png']
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
-                f'[{logo1_input_index}:v]scale=-2:120,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
-                '[main][logo1]overlay=W-w-30:45[tmp1];'
+                f'[{logo1_input_index}:v]scale=-2:83,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
+                '[main][logo1]overlay=W-w-70:70[tmp1];'
                 f'[tmp1]{title_drawtext}[tmp2];'
                 f'[tmp2]{banner_filter}[v]'
             )
