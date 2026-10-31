@@ -343,16 +343,20 @@ def start_m3u_stream():
             '-threads', DECODER_THREADS,
         ]
 
-        # SEEK PARAMETRESİ (Doğru Konum: -i parametresinden SONRA)
+        # SEEK PARAMETRESİ (Doğru Konum: ilgili -i parametresinden ÖNCE)
+        # FFmpeg'de giriş seçenekleri kendinden SONRA gelen -i'ye uygulanır.
         seek_args = ['-ss', str(last_seconds)] if last_seconds > 0 else []
 
         if ";" in target_stream_url:
             v_url, a_url = target_stream_url.split(";", 1)
-            input_args = input_options + ['-i', v_url.strip()] + seek_args + input_options + ['-i', a_url.strip()] + seek_args
+            input_args = (
+                input_options + seek_args + ['-i', v_url.strip()] +
+                input_options + seek_args + ['-i', a_url.strip()]
+            )
             audio_map = ['-map', '1:a:0?']
             logo1_input_index = 2
         else:
-            input_args = input_options + ['-i', target_stream_url] + seek_args
+            input_args = input_options + seek_args + ['-i', target_stream_url]
             audio_map = ['-map', '0:a:0?']
             logo1_input_index = 1
 
