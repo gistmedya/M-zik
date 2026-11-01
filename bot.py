@@ -42,6 +42,12 @@ END_TOLERANCE_SECONDS = 15
 SEEK_BACKOFF_SECONDS = 10
 LINK_CHANGE_REWIND_SECONDS = int(os.getenv("LINK_CHANGE_REWIND_SECONDS", "15"))
 
+# Erken kopma sonrası geri sarma / atlama ayarları
+RETRY_REWIND_STEP_SECONDS = int(os.getenv("RETRY_REWIND_STEP_SECONDS", "30"))  # her başarısız denemede +30 sn daha geri
+MAX_FAST_FAILURES_BEFORE_SKIP = int(os.getenv("MAX_FAST_FAILURES_BEFORE_SKIP", "8"))
+NEAR_END_FAST_FAILURES_BEFORE_SKIP = int(os.getenv("NEAR_END_FAST_FAILURES_BEFORE_SKIP", "3"))
+NEAR_END_REMAINING_SECONDS = int(os.getenv("NEAR_END_REMAINING_SECONDS", "120"))
+
 
 def format_hms(total_seconds):
     """Converts seconds to HH:MM:SS format."""
@@ -457,6 +463,12 @@ def start_m3u_stream():
 
         finished_naturally = (process.returncode == 0) and is_really_finished(current_stream_seconds, total_duration_sec)
 
+        # Hatanın gerçek sebebini görmek için FFmpeg'in son satırlarını yazdır
+        if not finished_naturally:
+            print("---- FFmpeg son satırlar ----")
+            print("\n".join(stderr_tail))
+            print("-----------------------------")
+
         if finished_naturally:
             print("✅ İçerik gerçekten bitti, sonraki videoya geçiliyor.")
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="✅ Bitti, sıradakine geçiliyor")
@@ -480,7 +492,16 @@ def start_m3u_stream():
             else:
                 consecutive_fast_failures = 0
 
-            if consecutive_fast_failures >= 3:
+            remaining = (total_duration_sec - current_stream_seconds) if total_duration_sec > 0 else 0
+            should_skip = (
+                consecutive_fast_failures >= MAX_FAST_FAILURES_BEFORE_SKIP
+                or (
+                    consecutive_fast_failures >= NEAR_END_FAST_FAILURES_BEFORE_SKIP
+                    and 0 < remaining < NEAR_END_REMAINING_SECONDS
+                )
+            )
+
+            if should_skip:
                 print(f"❌ {film_title} akışı sürekli hataya düştü. Sonraki içeriğe atlanıyor...")
                 current_index += 1
                 last_seconds = 0
@@ -489,9 +510,10 @@ def start_m3u_stream():
                 consecutive_fast_failures = 0
                 update_local_state(current_index, 0, "", "")
             else:
-                if consecutive_fast_failures > 1 and current_stream_seconds > SEEK_BACKOFF_SECONDS:
-                    last_seconds = max(0, current_stream_seconds - SEEK_BACKOFF_SECONDS)
-                    print(f"⏪ Takılma koruması: {SEEK_BACKOFF_SECONDS} saniye geriye sarılarak ({last_seconds}s) tekrar denenecek.")
+                if consecutive_fast_failures > 0:
+                    # Her başarısız denemede 30, 60, 90... sn daha geriden başla
+                    last_seconds = max(0, current_stream_seconds - RETRY_REWIND_STEP_SECONDS * consecutive_fast_failures)
+                    print(f"⏪ {last_seconds}s'den tekrar denenecek.")
                 else:
                     last_seconds = current_stream_seconds
 
