@@ -1,4 +1,4 @@
-name: fixtv
+name: maxtv
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
 
 # Çift yayın çalışmasını ve çakışmayı önleyen kural
 concurrency:
-  group: fixtv-stream
+  group: maxtv-stream
   cancel-in-progress: true
 
 jobs:
@@ -46,7 +46,7 @@ jobs:
       if: always()
       uses: softprops/action-gh-release@v1
       with:
-        files: state_fixtv.json
+        files: state_fixt .json
         tag_name: state-data
         name: "Yayın Kaldığı Yer (State)"
         draft: false
