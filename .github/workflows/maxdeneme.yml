@@ -35,7 +35,14 @@ jobs:
     - name: 📥 Kayıtlı State Dosyasını İndir
       continue-on-error: true
       run: |
-        curl -sL https://github.com/${{ github.repository }}/releases/download/state-data/state_fixtv.json -o state_fixtv.json
+        # -f: 404 olursa hata sayfasını dosyaya yazmaz
+        curl -fsSL https://github.com/${{ github.repository }}/releases/download/state-data/state_fixtv.json -o state_fixtv.json || rm -f state_fixtv.json
+        # Geçerli JSON değilse sil (bozuk dosya yerine temiz başlansın)
+        if [ -f state_fixtv.json ] && ! python3 -c "import json; json.load(open('state_fixtv.json'))"; then
+          echo "⚠️ State dosyası geçerli JSON değil, siliniyor."
+          rm -f state_fixtv.json
+        fi
+        ls -la state_fixtv.json && cat state_fixtv.json || echo "ℹ️ State yok, baştan başlanacak"
 
     - name: 🚀 Yayını başlat
       env:
@@ -46,7 +53,7 @@ jobs:
       if: always()
       uses: softprops/action-gh-release@v1
       with:
-        files: state_fixt .json
+        files: state_fixtv.json
         tag_name: state-data
         name: "Yayın Kaldığı Yer (State)"
         draft: false
