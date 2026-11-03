@@ -27,8 +27,8 @@ STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.3
 STREAM_REFERER = "https://vidmody.com/"
 
 # Logo ve yazı opaklık ayarları (0.0 - 1.0 arası)
-LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "0.4"))
-TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "0.4"))
+LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "0.5"))
+TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "0.5"))
 BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
 # Ekranın altındaki kayan yazı metni
@@ -362,7 +362,7 @@ def start_m3u_stream():
         # Film başlığı yazısı (Kayan yazının üstünde hizalandı)
         title_drawtext = (
             f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
-            f"fontcolor=white@{TEXT_OPACITY}:fontsize=25:"
+            f"fontcolor=white@{TEXT_OPACITY}:fontsize=22:"
             f"x=60:y=main_h-th-60"
         )
 
