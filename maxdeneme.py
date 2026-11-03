@@ -365,7 +365,7 @@ def start_m3u_stream():
         print_dashboard(film_title, current_index, len(playlist), last_seconds, status="🟡 Başlatılıyor")
 
         has_logo1 = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
-        title_drawtext = f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':fontcolor=white@{TEXT_OPACITY}:fontsize=25:x=w-tw-60:y=h-th-60"
+        title_drawtext = f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':fontcolor=white@{TEXT_OPACITY}:fontsize=25:x=60:y=h-th-60"
 
         if has_logo1:
             logo_inputs = ['-i', 'logo.png']
