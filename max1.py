@@ -13,11 +13,11 @@ from collections import deque
 
 # ===================== AYARLAR =====================
 RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101"
-STREAM_KEY = os.getenv("STREAM_KEY") or "seriesone@"
+STREAM_KEY = os.getenv("STREAM_KEY") or "6666"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
 # M3U8 URL (ortam değişkeni veya varsayılan)
-M3U8_URL = os.getenv("M3U8_URL") or "https://xtream.mutluapk.xyz/live/test/test23/1494.m3u8"
+M3U8_URL = os.getenv("M3U8_URL") or "https://v2.catcast.tv/content/50737/seg-27708703-v1-a1/index.m3u8"
 LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/1792794197378.png"
 
 STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", ".json")
@@ -27,7 +27,7 @@ STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.3
 STREAM_REFERER = "https://vidmody.com/"
 
 # Logo ve yazı opaklık ayarları (0.0 - 1.0 arası)
-LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "1.0"))
+LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "0.0"))
 TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "0.0"))
 BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
