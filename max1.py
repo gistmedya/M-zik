@@ -31,6 +31,18 @@ LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "0.0"))
 TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "0.0"))
 BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
+# ===================== ALT BANT (KAYAN YAZI) AYARLARI =====================
+BANNER_TEXT = os.getenv(
+    "BANNER_TEXT",
+    "BU KANAL VİZON GO ÜCRETLİ VERSİYONDA GEÇERLİDİR. İZLEMEK İÇİN PREMİUM OL"
+)
+BANNER_HEIGHT = int(os.getenv("BANNER_HEIGHT", "80"))                    # Şerit yüksekliği (piksel)
+BANNER_OPACITY = float(os.getenv("BANNER_OPACITY", "0.90"))              # Kırmızı şerit opaklığı (0.0 - 1.0)
+BANNER_TEXT_OPACITY = float(os.getenv("BANNER_TEXT_OPACITY", "1.0"))     # Kayan yazı opaklığı (0.0 - 1.0)
+BANNER_COLOR = os.getenv("BANNER_COLOR", "red")                          # Şerit rengi
+BANNER_FONT_SIZE = int(os.getenv("BANNER_FONT_SIZE", "30"))              # Yazı boyutu
+BANNER_SPEED = int(os.getenv("BANNER_SPEED", "100"))                     # Kayma hızı (piksel/saniye)
+
 # Decoder'ı tek thread'e zorlamak için
 DECODER_THREADS = os.getenv("DECODER_THREADS", "1")
 
@@ -171,7 +183,7 @@ def get_local_state():
     """Yerel state dosyasından son durumu okur."""
     if os.path.exists(STATE_FILE_NAME):
         if os.path.getsize(STATE_FILE_NAME) == 0:
-            return 0, 0, "", ""
+            return 0, "", ""
         try:
             with open(STATE_FILE_NAME, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -220,6 +232,15 @@ def write_title_file(title):
             f.write(title)
     except Exception as e:
         print(f"⚠️ Başlık dosyası yazma hatası: {e}")
+
+
+def write_banner_file(text):
+    """Kayan yazı metnini dosyaya yazar (özel karakter/kaçış sorunlarını önler)."""
+    try:
+        with open('banner.txt', 'w', encoding='utf-8') as f:
+            f.write(text)
+    except Exception as e:
+        print(f"⚠️ Alt bant dosyası yazma hatası: {e}")
 
 
 def derive_title_from_url(url):
@@ -280,6 +301,7 @@ def start_m3u8_stream():
     print(f"🔧 RTMP hedefi      : {RTMP_SERVER}")
 
     download_logo()
+    write_banner_file(BANNER_TEXT)
 
     # Tek bir yayın URL'si olduğu için state'ten sadece saniye/url/title okunur
     last_seconds, last_url, last_title = get_local_state()
@@ -359,8 +381,27 @@ def start_m3u8_stream():
 
         has_logo1 = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
 
-        # Film adı sol altta olacak şekilde ayarlandı
-        title_drawtext = f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':fontcolor=white@{TEXT_OPACITY}:fontsize=26:x=70:y=h-th-70"
+        # Film adı sol altta (kırmızı şeridin hemen üstünde)
+        title_drawtext = (
+            f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
+            f"fontcolor=white@{TEXT_OPACITY}:fontsize=26:x=70:y=h-th-{BANNER_HEIGHT}-30"
+        )
+
+        # Alt kırmızı şerit (opaklık ayarlı)
+        banner_box = (
+            f"drawbox=x=0:y=ih-{BANNER_HEIGHT}:w=iw:h={BANNER_HEIGHT}:"
+            f"color={BANNER_COLOR}@{BANNER_OPACITY}:t=fill"
+        )
+
+        # Şeridin üzerinde sağdan sola kayan yazı (opaklık ayarlı)
+        banner_drawtext = (
+            f"drawtext=textfile='banner.txt':fontfile='{BOLD_FONT_PATH}':"
+            f"fontcolor=white@{BANNER_TEXT_OPACITY}:fontsize={BANNER_FONT_SIZE}:"
+            f"x=w-mod(t*{BANNER_SPEED}\\,w+tw):"
+            f"y=h-{BANNER_HEIGHT}+({BANNER_HEIGHT}-th)/2"
+        )
+
+        overlay_chain = f"{title_drawtext},{banner_box},{banner_drawtext}"
 
         if has_logo1:
             logo_inputs = ['-i', 'logo.png']
@@ -369,13 +410,13 @@ def start_m3u8_stream():
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
                 f'[{logo1_input_index}:v]scale=-2:83,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
                 '[main][logo1]overlay=W-w-70:70[tmp1];'
-                f'[tmp1]{title_drawtext}[v]'
+                f'[tmp1]{overlay_chain}[v]'
             )
         else:
             logo_inputs = []
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
-                f'[main]{title_drawtext}[v]'
+                f'[main]{overlay_chain}[v]'
             )
 
         publisher.ensure_running()
