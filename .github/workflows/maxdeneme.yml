@@ -1,5 +1,4 @@
-name: maxtv
-
+name: fixtv
 on:
   push:
     branches: [ main ]
@@ -7,7 +6,7 @@ on:
 
 # Çift yayın çalışmasını ve çakışmayı önleyen kural
 concurrency:
-  group: maxtv-stream
+  group: fixtv-stream
   cancel-in-progress: true
 
 jobs:
@@ -16,7 +15,6 @@ jobs:
     timeout-minutes: 360
     permissions:
       contents: write
-      actions: write
     steps:
     - name: 📥 Depoyu klonla
       uses: actions/checkout@v4
@@ -35,14 +33,7 @@ jobs:
     - name: 📥 Kayıtlı State Dosyasını İndir
       continue-on-error: true
       run: |
-        # -f: 404 olursa hata sayfasını dosyaya yazmaz
-        curl -fsSL https://github.com/${{ github.repository }}/releases/download/state-data/state_fixtv.json -o state_fixtv.json || rm -f state_fixtv.json
-        # Geçerli JSON değilse sil (bozuk dosya yerine temiz başlansın)
-        if [ -f state_fixtv.json ] && ! python3 -c "import json; json.load(open('state_fixtv.json'))"; then
-          echo "⚠️ State dosyası geçerli JSON değil, siliniyor."
-          rm -f state_fixtv.json
-        fi
-        ls -la state_fixtv.json && cat state_fixtv.json || echo "ℹ️ State yok, baştan başlanacak"
+        curl -sL https://github.com/${{ github.repository }}/releases/download/state-data/state_fixtv.json -o state_fixtv.json
 
     - name: 🚀 Yayını başlat
       env:
@@ -66,4 +57,8 @@ jobs:
       env:
         GH_TOKEN: ${{ secrets.GH_TOKEN }}
       run: |
-        gh workflow run "${{ github.workflow }}" --repo "${{ github.repository }}" --ref main
+        curl -X POST \
+          -H "Authorization: token $GH_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          "https://api.github.com/repos/${{ github.repository }}/actions/workflows/maxdeneme.yml/dispatches" \
+          -d '{"ref":"main"}'
