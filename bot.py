@@ -13,8 +13,8 @@ import signal
 from collections import deque
 
 # ===================== AYARLAR =====================
-RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101"
-STREAM_KEY = os.getenv("STREAM_KEY") or "maxyerli"
+RTMP_URL = "rtmp://rtmp.zemmedya.com/zem"
+STREAM_KEY = os.getenv("STREAM_KEY") or "Neo?key=Zemmedya-7426239946"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
 M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/deneme.m3u"
