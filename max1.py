@@ -17,7 +17,7 @@ RTMP_URL = "rtmp://rtmp.zemmedya.com/zem"
 STREAM_KEY = os.getenv("STREAM_KEY") or "tnt?key=Zemmedya-2491293464"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
-M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/deneme.m3u"
+M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/yerli1.m3u"
 LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/1794817790378.png"
 
 STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "tnt.json")
