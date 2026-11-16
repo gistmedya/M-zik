@@ -17,7 +17,7 @@ RTMP_URL = "rtmp://rtmp.zemmedya.com/zem"
 STREAM_KEY = os.getenv("STREAM_KEY") or "tnt?key=Zemmedya-2491293464"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
-M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/yerli1.m3u"
+M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/deneme.m3u"
 LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/1794817790378.png"
 
 STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "tnt.json")
@@ -260,8 +260,6 @@ def start_m3u_stream():
     FAST_FAIL_THRESHOLD_SECONDS = 20
     MAX_RETRY_DELAY_SECONDS = 120
 
-    no_ss_urls = set()
-
     while True:
         playlist = get_m3u_playlist(M3U_URL)
         if not playlist:
@@ -320,16 +318,7 @@ def start_m3u_stream():
         print("=" * 60)
         print("📺 Maxanimasyon Canlı Aktarım Yayını (1080p 25fps - 2500k) Başlatılıyor")
         print(f"🎬 Oynatılan İçerik  : {film_title}")
-        
-        if target_stream_url in no_ss_urls:
-            print("💡 Dikkat: Bu kaynak -ss desteklemiyor. Seek atlanıyor, ancak kaldığı yer korunuyor.")
-            ss_arg = []
-            actual_start_seconds = last_seconds
-        else:
-            ss_arg = ['-ss', str(last_seconds)] if last_seconds > 0 else []
-            actual_start_seconds = last_seconds
-
-        print(f"⏱️ Başlangıç Saniyesi: {actual_start_seconds}")
+        print(f"⏱️ Başlangıç Saniyesi: {last_seconds}")
         print(f"🚀 Hedef RTMP       : {RTMP_SERVER}")
 
         input_options = [
@@ -351,28 +340,28 @@ def start_m3u_stream():
             audio_url = audio_url.strip()
 
             input_args = (
-                input_options + ss_arg + ['-re', '-i', video_url] +
-                input_options + ss_arg + ['-re', '-i', audio_url]
+                input_options + ['-re', '-i', video_url] +
+                input_options + ['-re', '-i', audio_url]
             )
             audio_map = ['-map', '1:a:0?']
             logo1_input_index = 2
         else:
-            input_args = input_options + ss_arg + ['-re', '-i', target_stream_url]
+            input_args = input_options + ['-re', '-i', target_stream_url]
             audio_map = ['-map', '0:a:0?']
             logo1_input_index = 1
 
         print("=" * 60)
 
-        print_dashboard(film_title, current_index, len(playlist), actual_start_seconds, status="🟡 Başlatılıyor")
-        write_step_summary(film_title, current_index, len(playlist), actual_start_seconds, status="🟡 Başlatılıyor")
+        print_dashboard(film_title, current_index, len(playlist), last_seconds, status="🟡 Başlatılıyor")
+        write_step_summary(film_title, current_index, len(playlist), last_seconds, status="🟡 Başlatılıyor")
 
         has_logo1 = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
 
-        # Film adı sağ alta alındı (x=main_w-tw-50:y=main_h-th-50)
+        # Film adı / başlık yazısı sağ alt köşeye ayarlandı (x=w-tw-50, y=main_h-th-50)
         title_drawtext = (
             f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
             f"fontcolor=white@{TEXT_OPACITY}:fontsize=23:"
-            f"x=main_w-tw-50:y=main_h-th-50"
+            f"x=w-tw-50:y=main_h-th-50"
         )
 
         ticker_drawtext = (
@@ -384,11 +373,11 @@ def start_m3u_stream():
 
         if has_logo1:
             logo_inputs = ['-i', 'logo.png']
-            # Logo sol üste alındı (overlay=104:80)
+            # Logo sol üst köşeye yerleştirildi (overlay=60:55)
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
                 'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
-                f'[{logo1_input_index}:v]scale=-2:85,format=rgba,'
+                f'[{logo1_input_index}:v]scale=-2:89,format=rgba,'
                 f'colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
                 '[main][logo1]overlay=104:80[tmp1];'
                 f'[tmp1]{title_drawtext}[tmp2];'
@@ -440,9 +429,10 @@ def start_m3u_stream():
         )
         _live_state["proc"] = process
 
+        base_seconds = last_seconds
         last_save_time = time.time()
         last_dashboard_time = time.time()
-        current_stream_seconds = actual_start_seconds
+        current_stream_seconds = base_seconds
         stderr_tail = deque(maxlen=40)
         played_seconds = 0.0
 
@@ -459,7 +449,7 @@ def start_m3u_stream():
                 if time_match:
                     hrs, mins, secs = time_match.groups()
                     played_seconds = int(hrs) * 3600 + int(mins) * 60 + float(secs)
-                    current_stream_seconds = actual_start_seconds + played_seconds
+                    current_stream_seconds = base_seconds + played_seconds
                     _live_state["seconds"] = current_stream_seconds
 
                     now = time.time()
@@ -495,13 +485,8 @@ def start_m3u_stream():
 
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="🔴 Bağlantı koptu, tekrar denenecek")
             
-            if played_seconds == 0 and last_seconds > 0:
-                print(f"⚠️ -ss parametresi bu linkte boş çıktı üretti. Bu URL için seek kalıcı olarak devre dışı bırakılıyor.")
-                no_ss_urls.add(target_stream_url)
-            else:
-                last_seconds = current_stream_seconds
-
-            duration_this_attempt = current_stream_seconds - last_seconds
+            last_seconds = current_stream_seconds
+            duration_this_attempt = current_stream_seconds - base_seconds
             if duration_this_attempt < FAST_FAIL_THRESHOLD_SECONDS:
                 consecutive_fast_failures += 1
             else:
