@@ -315,10 +315,12 @@ def start_m3u_stream():
         if media_duration and last_seconds > media_duration:
             last_seconds = 0
 
+        target_resume_seconds = max(0, float(last_seconds))
+
         print("=" * 60)
         print("📺 Maxanimasyon Canlı Aktarım Yayını (1080p 25fps - 2500k) Başlatılıyor")
         print(f"🎬 Oynatılan İçerik  : {film_title}")
-        print(f"⏱️ Başlangıç Saniyesi: {last_seconds}")
+        print(f"⏱️ Hedef Devam Saniyesi: {format_hms(target_resume_seconds)} ({target_resume_seconds:.0f}s)")
         print(f"🚀 Hedef RTMP       : {RTMP_SERVER}")
 
         input_options = [
@@ -352,8 +354,8 @@ def start_m3u_stream():
 
         print("=" * 60)
 
-        print_dashboard(film_title, current_index, len(playlist), last_seconds, status="🟡 Başlatılıyor")
-        write_step_summary(film_title, current_index, len(playlist), last_seconds, status="🟡 Başlatılıyor")
+        print_dashboard(film_title, current_index, len(playlist), target_resume_seconds, status="🟡 Başlatılıyor")
+        write_step_summary(film_title, current_index, len(playlist), target_resume_seconds, status="🟡 Başlatılıyor")
 
         has_logo1 = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
 
@@ -423,24 +425,58 @@ def start_m3u_stream():
 
         process = subprocess.Popen(
             command,
-            stdout=publisher.proc.stdin,
+            stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            universal_newlines=True
+            bufsize=65536
         )
         _live_state["proc"] = process
 
-        base_seconds = last_seconds
+        base_seconds = 0.0
         last_save_time = time.time()
         last_dashboard_time = time.time()
         current_stream_seconds = base_seconds
         stderr_tail = deque(maxlen=40)
         played_seconds = 0.0
+        skip_announced = False
+        live_announced = False
+
+        def _pump_stdout_to_rtmp():
+            nonlocal skip_announced, live_announced
+            try:
+                while True:
+                    chunk = process.stdout.read(65536)
+                    if not chunk:
+                        break
+                    if current_stream_seconds + 1.0 >= target_resume_seconds:
+                        if not live_announced and target_resume_seconds > 0:
+                            print(f"🟢 Hedef saniyeye ({format_hms(target_resume_seconds)}) ulaşıldı, yayın RTMP'ye aktarılıyor.")
+                            live_announced = True
+                        publisher.ensure_running()
+                        try:
+                            publisher.proc.stdin.write(chunk)
+                        except Exception:
+                            publisher.stop()
+                            publisher.ensure_running()
+                            try:
+                                publisher.proc.stdin.write(chunk)
+                            except Exception:
+                                pass
+                    else:
+                        if not skip_announced:
+                            print(f"⏩ Sunucu -ss desteklemediği için {format_hms(target_resume_seconds)} saniyesine kadar sessiz/hızlı geçiliyor...")
+                            skip_announced = True
+            except Exception:
+                pass
+
+        pump_thread = threading.Thread(target=_pump_stdout_to_rtmp, daemon=True)
+        pump_thread.start()
 
         while True:
-            line = process.stderr.readline()
-            if not line and process.poll() is not None:
+            raw_line = process.stderr.readline()
+            if not raw_line and process.poll() is not None:
                 break
 
+            line = raw_line.decode('utf-8', 'replace') if raw_line else ""
             if line:
                 stderr_tail.append(line.rstrip())
 
@@ -459,9 +495,12 @@ def start_m3u_stream():
                         last_save_time = now
 
                     if now - last_dashboard_time > 30:
-                        print_dashboard(film_title, current_index, len(playlist), current_stream_seconds)
-                        write_step_summary(film_title, current_index, len(playlist), current_stream_seconds)
+                        durum_metni = "⏩ Kaldığı yere ilerleniyor" if current_stream_seconds + 1.0 < target_resume_seconds else "🟢 Yayında"
+                        print_dashboard(film_title, current_index, len(playlist), current_stream_seconds, status=durum_metni)
+                        write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status=durum_metni)
                         last_dashboard_time = now
+
+        pump_thread.join(timeout=5)
 
         is_actually_finished = False
         if media_duration and current_stream_seconds >= media_duration - 15:
@@ -484,7 +523,7 @@ def start_m3u_stream():
                     print(f"   {tail_line}")
 
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="🔴 Bağlantı koptu, tekrar denenecek")
-            
+
             last_seconds = current_stream_seconds
             duration_this_attempt = current_stream_seconds - base_seconds
             if duration_this_attempt < FAST_FAIL_THRESHOLD_SECONDS:
